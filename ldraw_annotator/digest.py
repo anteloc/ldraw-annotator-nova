@@ -115,6 +115,8 @@ def section_view(ir, s, ups, names):
     task = "decide: leaf, or split one level" if s["state"] == "open" else "describe only (do not split)"
     if s.get("orphan"):
         task += "; unreferenced section, not part of the main model"
+    if s.get("rename"):
+        task += '; its name says nothing: give it a descriptive kebab-case "rename"'
     if s["state"] == "open" and s.get("passes"):
         task += ("; already split before (its children are items here): split off more assemblies "
                  "from the remaining parts only if there are any, else leaf")

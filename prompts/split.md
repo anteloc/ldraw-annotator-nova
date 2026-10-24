@@ -17,6 +17,8 @@ For EVERY listed section, return in the structured output:
     Items you don't list stay in the section itself.
   - Only sections marked `decide: leaf, or split one level` may get new submodels. Answer `[]`
     for sections marked `describe only`.
+- `rename`: only for sections marked "its name says nothing". Give a short kebab-case name that
+  says what the section is (`front-door-frame`, `left-leg`), like the names of new submodels.
 - `groups` (optional): one-line comments for a run of consecutive items (`"3-9"`) that is worth
   naming but not worth a submodel, e.g. `{"items": "12-17", "comment": "left wall windows"}`.
 

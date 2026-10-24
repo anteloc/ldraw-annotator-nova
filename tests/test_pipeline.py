@@ -113,3 +113,39 @@ def test_digest_lists_items_and_steps():
     text = digest.unit_digest(ir, ["S2"])
     assert 'i19 > S3 "106 - wheel assembly.ldr" [2 items]' in text
     assert "i0 Plate  2 x 10 (black) @0,0,0" in text and "--- step" in text
+
+
+def test_meaningless_names_are_renamed_with_their_references(tmp_path):
+    src = tmp_path / "toy.mpd"
+    src.write_text("0 FILE main.ldr\n0 main\n0 Name: main.ldr\n"
+                   "1 16 0 0 0 1 0 0 0 1 0 0 0 1 step 2.ldr\n1 4 40 0 0 1 0 0 0 1 0 0 0 1 Step 2.ldr\n"
+                   "0 FILE step 2.ldr\n0 step 2\n0 Name: step 2.ldr\n"
+                   "1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n1 1 0 -24 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
+    ir = mpd.load(src)
+    assert ir["sections"]["S2"]["rename"] and not ir["sections"]["S1"]["rename"]
+    answer = {"sections": [{"id": "S2", "description": "Two stacked bricks", "rename": "brick-stack", "new": []}]}
+    assert plan.repair_split(ir, ["S2"], answer)[0] == []
+    plan.apply_split(ir, answer)
+    out, report = write_and_check(ir, src, tmp_path)
+    assert report["ok"], report["errors"]
+    text = out.read_text()
+    assert "step 2" not in text.lower()
+    assert text.count("toy - brick-stack.ldr") == 4  # 2 references, FILE line, Name: line
+
+
+def test_rate_limited_calls_wait_without_using_an_attempt(tmp_path, monkeypatch):
+    import threading
+    from ldraw_annotator import run
+    runner = object.__new__(run.Runner)  # no Cline needed: the call itself is replaced
+    runner.log_lock = threading.Lock()
+    answer = {"sections": [{"id": "S3", "description": "Wheel: grey rim with black tyre", "new": []}]}
+    replies = iter([(None, {"error": "cline call failed: Rate limit reached for requests"}),
+                    (None, {"error": "cline call failed: Rate limit reached for requests"}),
+                    (answer, {"error": None})])
+    runner.call = lambda kind, schema, text: next(replies)
+    monkeypatch.setattr(run.time, "sleep", lambda seconds: None)
+    ir = mpd.load(DOCS / "106-1.mpd")
+    result = runner.unit(tmp_path, ir, "r1-u00", ["S3"], "split")
+    assert result == answer
+    log = [l for l in (tmp_path / "log.jsonl").read_text().splitlines()]
+    assert len(log) == 3 and all('"attempt": 1' in l for l in log)

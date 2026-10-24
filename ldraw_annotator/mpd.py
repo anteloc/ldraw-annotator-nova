@@ -45,6 +45,12 @@ normalized = apd.normalized
 # produce single-item wrappers. Orphan (unreferenced) sections are only described.
 MIN_SPLIT_ITEMS = 4
 
+# Existing section names that say nothing get a descriptive name from the agent (see poorly_named).
+GENERIC_WORDS = {"step", "steps", "substep", "sub", "submodel", "model", "part", "parts", "untitled",
+                 "unnamed", "new", "copy", "main", "assy", "assembly", "section", "group", "file", "item",
+                 "piece", "ldr", "mpd", "dat"}
+STEP_WORDS = {"step", "steps", "substep"}
+
 # Lines that belong to the part right below them and must move with it.
 ATTACHED = re.compile(r"0 (//|BFC INVERTNEXT|MLCAD BTG|!LDCAD GROUP_NXT|!TEXMAP NEXT)")
 STEP = re.compile(r"0 (STEP|ROTSTEP)\b")
@@ -298,6 +304,7 @@ def load(path):
         s.update(desc=title, has_title=title is not None, head=head, keywords=[], body=itemize(body),
                  todo=True)  # every existing model section gets described in round 1
         s["state"] = "open" if not s["orphan"] and len(items(s)) >= MIN_SPLIT_ITEMS else "leaf"
+        s["rename"] = sid != root and not s["orphan"] and poorly_named(ir, s)
     return ir
 
 
@@ -323,6 +330,39 @@ def children(ir, section):
     names = section_by_name(ir)
     return [names[i["ref"]] for i in items(section)
             if i["ref"] in names and names[i["ref"]]["kind"] in ("model", "flex")]
+
+
+def poorly_named(ir, s):
+    """True for names that say nothing: numbers, codes, step numbers, 'submodel-3', 'Untitled'.
+
+    A name is meaningful if, without prefix and extension, it has a real word (3+ letters with a
+    vowel, not a generic word like 'submodel') and isn't numbered after build steps ('house-step36').
+    """
+    stem = Path(s["name"].replace("\\", "/")).stem
+    if stem.startswith(ir["prefix"].strip()):
+        stem = stem[len(ir["prefix"].strip()):]
+    return meaningless(stem)
+
+
+def meaningless(stem):
+    tokens = re.findall(r"[a-z]+|\d+", stem.lower())
+    words = [w for w in tokens if len(w) >= 3 and w.isalpha() and w not in GENERIC_WORDS
+             and re.search("[aeiouy]", w)]
+    return not words or any(w in STEP_WORDS for w in tokens)
+
+
+def rename(ir, s, slug):
+    """Give a model section a new descriptive name; every reference and its Name: line follow."""
+    old, new = normalized(s["name"]), unique_name(ir, slug)
+    for t in ir["sections"].values():
+        for item in (e for e in t.get("body", []) if isinstance(e, dict)):
+            if item["ref"] == old:
+                item["lines"] = [re.sub(r"^(\s*(?:\S+\s+){14}).*$", lambda m: m.group(1) + new, l)
+                                 if type1(l) and normalized(type1(l)[2]) == old else l for l in item["lines"]]
+                item["ref"] = normalized(new)
+    s["head"] = [f"0 Name: {new}" if words(l, 1)[1:2] and l.split(None, 1)[1].startswith("Name:") else l
+                 for l in s["head"]]
+    s["name"] = new
 
 
 def new_id(ir):

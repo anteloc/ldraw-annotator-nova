@@ -139,6 +139,7 @@ def dispatch(args):
         return 0, {"created": created, "repairs": notes, "ir": str(wd / f"ir.r{n}.json")}
     if args.cmd == "write":
         ir = latest_ir(args.work, args.model)
+        plan.finalize_names(ir)
         mpd.write(ir, args.output)
         return 0, {"output": args.output}
     if args.cmd == "check":

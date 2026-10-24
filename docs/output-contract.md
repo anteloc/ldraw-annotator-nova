@@ -82,13 +82,18 @@ agents and tools that consume these files:
   - no cycles.
 - Depth is **semantic**: a submodel is split only into assemblies that make sense (moving parts,
   functional units, minifigs…). There's no fixed number of levels.
-- Existing sections and names are kept. Unreferenced (orphan) sections of the input are kept and
-  described, but they aren't part of the main model's tree.
+- Existing sections are kept; meaningless names are replaced (section 7). Unreferenced (orphan)
+  sections of the input are kept and described, but they aren't part of the main model's tree.
 
 ## 7. Names
 
 - New sections are named `<prefix> - <kebab-case name>.ldr`, e.g. `8466 - front-axle.ldr`.
 - The prefix is the one shared by the input's section names, otherwise the set number or file name.
+- Existing names that say what the section is are kept.
+- Meaningless existing names are renamed the same way, and every reference and `0 Name:` line
+  follows. That covers numbers (`10174_4.ldr`), codes (`8466ta4.ldr`), build-step numbers
+  (`house-step36.ldr`), and `subModel-3` / `Untitled`.
+- The main model and unreferenced (orphan) sections keep their names.
 
 ## 8. Order
 

@@ -39,7 +39,9 @@ cline auth -p openai-compatible -k <api-key> -b https://api.z.ai/api/coding/paas
   - Only part references reach the LLM: geometry is set aside and copied verbatim.
   - Each LLM call is a single-shot JSON answer (`cline --plan --json`) over a compact digest,
     validated (and repaired where harmless) by the tool.
-  - Calls of all models share one pool of `-j` workers.
+  - Calls of all models share one pool of `-j` workers. Provider rate limits are waited out
+    automatically.
+  - Measured: all 21 test models (up to 36 MB) in about 13 minutes of wall time with `-j 8`.
 - **Models.** `--provider` (default `openai-compatible`). `--split-model` (default `glm-5.3`)
   decides the hierarchy. `--refine-model` (default `glm-5.3-flash`) rewrites parent descriptions.
   `--thinking` sets the reasoning effort (default `low`; GLM's default reasoning made calls

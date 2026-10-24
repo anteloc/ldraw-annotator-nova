@@ -9,6 +9,8 @@ A refine plan only rewrites descriptions of sections that have children (bottom-
 Item ids are the "iN" numbers of the digest, written as ranges: "0-7,12".
 """
 
+import re
+
 from . import mpd
 
 # Machine-readable function tags (output contract, "0 !KEYWORDS"). Keep in sync with the docs.
@@ -28,6 +30,7 @@ SPLIT_SCHEMA = {
             "id": {"type": "string"},
             "description": {"type": "string"},
             "keywords": _keywords,
+            "rename": {"type": "string"},
             "new": {"type": "array", "items": {
                 "type": "object", "additionalProperties": False,
                 "required": ["name", "items", "description"],
@@ -108,6 +111,9 @@ def repair_split(ir, section_ids, plan):
         if err := description_error(sp.get("description")):
             errors.append(f"{sid}: {err}")
         sp["keywords"] = [k for k in sp.get("keywords") or [] if k in KEYWORDS]
+        if sp.get("rename") and not (s.get("rename") and str(sp["rename"]).strip()):
+            notes.append(f"{sid}: only sections with a meaningless name are renamed; name kept")
+            sp.pop("rename")
         new = sp.get("new") or []
         if new and not can_split(s):
             notes.append(f"{sid}: describe-only section was split; kept as a leaf")
@@ -168,6 +174,9 @@ def apply_split(ir, plan):
     for sp in plan["sections"]:
         s = ir["sections"][sp["id"]]
         s["desc"], s["keywords"], s["todo"] = sp["description"].strip(), sp.get("keywords") or [], False
+        if s.get("rename") and sp.get("rename"):
+            mpd.rename(ir, s, sp["rename"])
+            s["rename"] = False
         n = len(mpd.items(s))
         new = sp.get("new") or []
         dest = {k: g for g, grp in enumerate(new) for k in parse_items(grp["items"], n)}
@@ -209,6 +218,24 @@ def apply_split(ir, plan):
             big = len(mpd.items(kid)) >= mpd.MIN_SPLIT_ITEMS
             kid["state"], kid["todo"] = ("open", True) if big else ("leaf", False)
     return created
+
+
+def finalize_names(ir):
+    """Sections still flagged with a meaningless name (the agent gave none, or its unit failed)
+    get one from their description, if that yields a meaningful name."""
+    for s in list(ir["sections"].values()):
+        slug = slug_from(s.get("desc") or "")
+        if s.get("rename") and slug and not mpd.meaningless(slug):
+            mpd.rename(ir, s, slug)
+            s["rename"] = False
+
+
+def slug_from(description):
+    """A short name from a description: its head noun phrase, e.g. 'Windscreen and seat assembly
+    with tan details' -> 'windscreen-and-seat-assembly'."""
+    head = re.split(r"[,:;(]| with | of | on | for | in | at ", description, maxsplit=1)[0]
+    words = [w for w in re.findall(r"[a-z0-9]+", head.lower()) if w not in ("a", "an", "the")]
+    return "-".join(words[:4])
 
 
 def loose_parts(ir, s):

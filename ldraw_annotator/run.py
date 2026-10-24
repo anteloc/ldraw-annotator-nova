@@ -31,6 +31,7 @@ from . import check, digest, mpd, plan
 MAX_ROUNDS = 10  # safety cap; recursion normally ends when every open section is a leaf
 CALL_TIMEOUT = 900
 ATTEMPTS = 3  # retries ask again only for the rejected sections, with the reasons
+RATE_LIMIT_WAITS = [10, 20, 40, 80, 160]  # seconds to wait before re-sending a rate-limited call
 
 # Defaults: z.ai GLM through Cline's OpenAI-compatible provider, in a dedicated Cline profile.
 PROVIDER = "openai-compatible"
@@ -119,8 +120,10 @@ class Runner:
             r += 1
             units = {f"r{r}-u{k:02d}": ids for k, ids in enumerate(digest.pack_units(ir, todo))}
             futures = {uid: self.llm.submit(self.unit, wd, ir, uid, ids, "split") for uid, ids in units.items()}
+            # Units read the IR while they run (digests, checks): change it only once all are done.
+            answers = {uid: future.result() for uid, future in futures.items()}
             for uid, ids in units.items():  # apply in a fixed order: ids and names are deterministic
-                answer = futures[uid].result()
+                answer = answers[uid]
                 plan.apply_split(ir, answer)
                 answered = {sp["id"] for sp in answer["sections"]}
                 if len(answered) < len(ids):
@@ -132,6 +135,7 @@ class Runner:
             plan.apply_refine(ir, self.unit(wd, ir, "refine", parents, "refine"))
             save_json(wd / "ir.final.json", ir)
 
+        plan.finalize_names(ir)
         draft = wd / out.name
         mpd.write(ir, draft)
         report = check.check(path, draft, pyldraw=self.pyldraw)
@@ -165,7 +169,15 @@ class Runner:
         good, feedback, errors = {}, "", []
         for attempt in range(1, ATTEMPTS + 1):
             pending = [sid for sid in ids if sid not in good]
-            answer, info = self.call(kind, schema, view(ir, pending) + feedback)
+            text = view(ir, pending) + feedback
+            answer, info = self.call(kind, schema, text)
+            for wait in RATE_LIMIT_WAITS:  # the provider's rate limit doesn't use up an attempt
+                if answer is not None or "rate limit" not in (info["error"] or "").lower():
+                    break
+                self.log(wd, dict(info, unit=uid, attempt=attempt, sections=len(pending),
+                                  errors=[info["error"]], repairs=[], waited=wait))
+                time.sleep(wait)
+                answer, info = self.call(kind, schema, text)
             errors, notes, answered = [], [], set()
             if answer is None:
                 errors.append(info["error"])
