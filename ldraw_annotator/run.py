@@ -1,8 +1,10 @@
 """Batch orchestrator: prep -> rounds of LLM decisions -> refine -> write -> check. Resumable.
 
-Each LLM call is one single-shot `claude -p` run: the system prompt is a prompt + the guide
-(identical for every call, so cacheable), stdin is a digest, and the reply is JSON validated
-by --json-schema and then by plan.py. Calls of all models in the batch share one worker pool.
+Each LLM call is one single-shot Cline CLI run (`cline --plan --json`) in a dedicated Cline
+profile (--data-dir, see README): no MCP servers, no tools needed, your own Cline untouched.
+The system prompt is a prompt + the guide + the answer's JSON Schema (identical for every call,
+so cacheable); the prompt is a digest; the reply's JSON object is validated by plan.py. Calls of all
+models in the batch share one worker pool.
 
 Work directory layout (the filesystem is the manifest; an abort never redoes finished work):
   work/<model>/ir.r0.json          IR after prep (part comments added, flexible parts isolated)
@@ -16,6 +18,7 @@ Work directory layout (the filesystem is the manifest; an abort never redoes fin
 
 import json
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -27,7 +30,18 @@ from . import check, digest, mpd, plan
 
 MAX_ROUNDS = 10  # safety cap; recursion normally ends when every open section is a leaf
 CALL_TIMEOUT = 900
-ATTEMPTS = 2  # a rejected answer is retried once, with the validation errors appended
+ATTEMPTS = 3  # retries ask again only for the rejected sections, with the reasons
+
+# Defaults: z.ai GLM through Cline's OpenAI-compatible provider, in a dedicated Cline profile.
+PROVIDER = "openai-compatible"
+SPLIT_MODEL = "glm-5.3"
+REFINE_MODEL = "glm-5.3-flash"
+# Measured on 106-1: "low" answers in ~9 s; the provider default and "none" (not honoured by
+# GLM) stream long reasoning and take 90-130 s for the same plan.
+THINKING = "low"
+CLINE_DIR = Path.home() / ".cline" / "ldraw-annotator"
+AUTH_HELP = ("cline auth -p openai-compatible -k <api-key> -b https://api.z.ai/api/coding/paas/v4 "
+             "-m glm-5.3 --data-dir {dir}")
 
 
 def model_key(path):
@@ -39,19 +53,30 @@ def save_json(path, data):
 
 
 class Runner:
-    def __init__(self, out_dir, work_dir="work", jobs=4, split_model="sonnet", refine_model="haiku",
-                 force=False, pyldraw=True):
+    def __init__(self, out_dir, work_dir="work", jobs=4, split_model=SPLIT_MODEL, refine_model=REFINE_MODEL,
+                 force=False, pyldraw=True, provider=PROVIDER, cline_dir=CLINE_DIR, thinking=THINKING):
         self.out, self.work = Path(out_dir), Path(work_dir)
         self.jobs, self.force, self.pyldraw = jobs, force, pyldraw
         self.models = {"split": split_model, "refine": refine_model}
+        self.provider, self.cline_dir, self.thinking = provider, Path(cline_dir).expanduser(), thinking
+        if not shutil.which("cline"):
+            raise ValueError("the 'cline' CLI is not installed (npm install -g cline)")
+        if not (self.cline_dir / "settings" / "providers.json").exists():
+            raise ValueError(f"no Cline profile in {self.cline_dir}; create it once with: "
+                             + AUTH_HELP.format(dir=self.cline_dir))
+        # An empty working directory outside the project: Cline loads no project rules or files.
+        self.cwd = Path(tempfile.gettempdir()) / "ldraw-annotator-cwd"
+        self.cwd.mkdir(exist_ok=True)
         self.llm = ThreadPoolExecutor(jobs)
         self.log_lock = threading.Lock()
         guide = (mpd.ROOT / "docs" / "annotation-guide.md").read_text()
-        self.prompts = {}
-        for kind in ("split", "refine"):
+        self.system = {}
+        for kind, schema in (("split", plan.SPLIT_SCHEMA), ("refine", plan.REFINE_SCHEMA)):
             text = (mpd.ROOT / "prompts" / f"{kind}.md").read_text()
-            self.prompts[kind] = self.work / ".prompts" / f"{kind}.md"
-            mpd.atomic_write(self.prompts[kind], text + ("\n\n" + guide if kind == "split" else ""))
+            self.system[kind] = (text + ("\n\n" + guide if kind == "split" else "")
+                                 + "\n\n## Answer format\n\nReply with ONE JSON object and nothing else "
+                                 "(no prose, no code fences, no tools), valid against this JSON Schema:\n\n"
+                                 + json.dumps(schema, separators=(",", ":")))
 
     # ------------------------------------------------------------ batch
 
@@ -93,22 +118,18 @@ class Runner:
                 break
             r += 1
             units = {f"r{r}-u{k:02d}": ids for k, ids in enumerate(digest.pack_units(ir, todo))}
-            futures = {uid: self.llm.submit(self.unit, wd, ir, uid, ids, "split",
-                                            digest.unit_digest(ir, ids))
-                       for uid, ids in units.items()}
+            futures = {uid: self.llm.submit(self.unit, wd, ir, uid, ids, "split") for uid, ids in units.items()}
             for uid, ids in units.items():  # apply in a fixed order: ids and names are deterministic
                 answer = futures[uid].result()
-                if answer is None:
-                    fail(ir, uid, ids)
-                else:
-                    plan.apply_split(ir, answer)
+                plan.apply_split(ir, answer)
+                answered = {sp["id"] for sp in answer["sections"]}
+                if len(answered) < len(ids):
+                    fail(ir, uid, [sid for sid in ids if sid not in answered])
             save_json(wd / f"ir.r{r}.json", ir)
 
         parents = digest.refine_ids(ir)
         if parents:
-            answer = self.unit(wd, ir, "refine", parents, "refine", digest.tree_digest(ir, parents))
-            if answer is not None:
-                plan.apply_refine(ir, answer)
+            plan.apply_refine(ir, self.unit(wd, ir, "refine", parents, "refine"))
             save_json(wd / "ir.final.json", ir)
 
         draft = wd / out.name
@@ -126,8 +147,13 @@ class Runner:
 
     # ------------------------------------------------------------ one LLM call
 
-    def unit(self, wd, ir, uid, ids, kind, text):
-        """Return a validated plan for one unit, reusing a saved answer; None if it failed."""
+    def unit(self, wd, ir, uid, ids, kind):
+        """Return the plan of one unit: {"sections": [...]} with every section answered correctly.
+
+        A saved answer is reused. A retry asks again only for the sections that were missing or
+        rejected, with the reasons. Sections still failing after ATTEMPTS are left out (the caller
+        falls back for them) and recorded in units/<uid>.failed.json.
+        """
         saved = wd / "units" / f"{uid}.json"
         if saved.exists():
             data = json.loads(saved.read_text())
@@ -135,44 +161,66 @@ class Runner:
                 return data["plan"]
         repair = plan.repair_split if kind == "split" else plan.repair_refine
         schema = plan.SPLIT_SCHEMA if kind == "split" else plan.REFINE_SCHEMA
-        feedback, errors = "", []
+        view = digest.unit_digest if kind == "split" else digest.tree_digest
+        good, feedback, errors = {}, "", []
         for attempt in range(1, ATTEMPTS + 1):
-            answer, info = self.call(kind, schema, text + feedback)
-            errors, notes = ([info["error"]], []) if answer is None else repair(ir, ids, answer)
-            self.log(wd, dict(info, unit=uid, attempt=attempt, sections=len(ids), errors=errors[:10],
+            pending = [sid for sid in ids if sid not in good]
+            answer, info = self.call(kind, schema, view(ir, pending) + feedback)
+            errors, notes, answered = [], [], set()
+            if answer is None:
+                errors.append(info["error"])
+            for sp in (answer or {}).get("sections", []):
+                sid = sp.get("id") if isinstance(sp, dict) else None
+                if sid not in pending or sid in answered:
+                    continue
+                answered.add(sid)
+                found, fixed = repair(ir, [sid], {"sections": [sp]})  # repairs sp in place
+                errors, notes = errors + found, notes + fixed
+                if not found:
+                    good[sid] = sp
+            if answer is not None:
+                errors += [f"{sid}: missing from the answer" for sid in pending if sid not in answered]
+            self.log(wd, dict(info, unit=uid, attempt=attempt, sections=len(pending), errors=errors[:10],
                               repairs=notes[:10]))
-            if not errors:
-                save_json(saved, {"sections": ids, "plan": answer})
-                return answer
-            feedback = ("\n\nYour previous answer was rejected for these reasons; answer again, "
-                        "fixing them:\n- " + "\n- ".join(errors[:20]))
-        save_json(wd / "units" / f"{uid}.failed.json", {"sections": ids, "errors": errors})
-        return None
+            if len(good) == len(ids):
+                break
+            feedback = ("\n\nYour previous answer for these sections was rejected for these reasons; "
+                        "answer again, fixing them:\n- " + "\n- ".join(errors[:20]))
+        result = {"sections": [good[sid] for sid in ids if sid in good]}
+        if len(good) == len(ids):
+            save_json(saved, {"sections": ids, "plan": result})
+        else:
+            save_json(wd / "units" / f"{uid}.failed.json", {"sections": ids, "errors": errors})
+        return result
 
     def call(self, kind, schema, text):
-        """One headless Claude call. Returns (structured output or None, log info)."""
-        cmd = ["claude", "-p", "--model", self.models[kind], "--tools", "", "--output-format", "json",
-               "--no-session-persistence", "--strict-mcp-config", "--json-schema", json.dumps(schema),
-               "--system-prompt-file", str(self.prompts[kind].resolve())]
+        """One headless Cline call. Returns (the reply's JSON object or None, log info)."""
+        cmd = ["cline", "--plan", "--json", "--data-dir", str(self.cline_dir), "-P", self.provider,
+               "-m", self.models[kind], "-c", str(self.cwd), "-t", str(CALL_TIMEOUT), "-s", self.system[kind]]
+        if self.thinking:
+            cmd += ["--thinking", self.thinking]
+        # The digest is the prompt argument: this Cline version ignores piped stdin in JSON mode.
+        cmd.append(text)
         t0 = time.time()
         info = {"model": self.models[kind], "input_chars": len(text)}
         try:
-            # A neutral working directory keeps project files out of the model's context.
-            proc = subprocess.run(cmd, input=text, capture_output=True, text=True,
-                                  timeout=CALL_TIMEOUT, cwd=tempfile.gettempdir())
-            data = json.loads(proc.stdout or "{}")
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as e:
+            proc = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                                  timeout=CALL_TIMEOUT + 60, cwd=self.cwd)
+        except (subprocess.TimeoutExpired, OSError) as e:
             return None, dict(info, seconds=round(time.time() - t0, 1), error=f"{type(e).__name__}: {e}")
-        usage = data.get("usage") or {}
-        info.update(seconds=round(time.time() - t0, 1), cost=data.get("total_cost_usd"),
-                    input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
-                    cache_read=usage.get("cache_read_input_tokens"),
-                    cache_write=usage.get("cache_creation_input_tokens"))
-        answer = data.get("structured_output")
-        if data.get("is_error") or data.get("subtype") != "success" or not isinstance(answer, dict):
-            detail = data.get("result") or proc.stderr.strip()[-300:] or f"exit code {proc.returncode}"
-            return None, dict(info, error=f"claude call failed: {str(detail)[:300]}")
-        return answer, dict(info, error=None)
+        result = next((e for e in map(json_line, reversed(proc.stdout.splitlines()))
+                       if e.get("type") == "run_result"), {})
+        usage = result.get("usage") or {}
+        info.update(seconds=round(time.time() - t0, 1), cost=usage.get("totalCost"),
+                    input_tokens=usage.get("inputTokens"), output_tokens=usage.get("outputTokens"),
+                    cache_read=usage.get("cacheReadTokens"), cache_write=usage.get("cacheWriteTokens"))
+        if result.get("finishReason") != "completed":
+            detail = result.get("text") or proc.stderr.strip()[-300:] or f"exit code {proc.returncode}"
+            return None, dict(info, error=f"cline call failed: {str(detail)[:300]}")
+        try:
+            return parse_answer(result.get("text") or ""), dict(info, error=None)
+        except ValueError as e:
+            return None, dict(info, error=f"reply is not one JSON object: {e}")
 
     def log(self, wd, entry):
         wd.mkdir(parents=True, exist_ok=True)
@@ -180,9 +228,27 @@ class Runner:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
+def json_line(line):
+    try:
+        return json.loads(line)
+    except ValueError:
+        return {}
+
+
+def parse_answer(text):
+    """The JSON object in a model's reply (tolerates code fences or prose around it)."""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("no JSON object found")
+    answer = json.loads(text[start:end + 1])
+    if not isinstance(answer, dict):
+        raise ValueError("not a JSON object")
+    return answer
+
+
 def fail(ir, uid, ids):
-    """A unit that failed twice: its sections stay as they are (unsplit), flagged in check.json."""
-    ir.setdefault("failed_units", []).append(uid)
+    """Sections a unit couldn't get right: they stay as they are (unsplit), flagged in check.json."""
+    ir.setdefault("failed_units", []).append(f"{uid}: {', '.join(ids)}")
     for sid in ids:
         s = ir["sections"][sid]
         s["todo"], s["state"] = False, "leaf"

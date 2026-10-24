@@ -49,10 +49,10 @@ MIN_SPLIT_ITEMS = 4
 ATTACHED = re.compile(r"0 (//|BFC INVERTNEXT|MLCAD BTG|!LDCAD GROUP_NXT|!TEXMAP NEXT)")
 STEP = re.compile(r"0 (STEP|ROTSTEP)\b")
 PART_ORG = re.compile(r"part|subpart|primitive|shortcut", re.I)
-# First words that make a type-0 line a meta command or header, not a description/title.
-NOT_TITLE = {"NAME:", "AUTHOR:", "BFC", "FILE", "NOFILE", "STEP", "ROTSTEP", "WRITE", "PRINT",
-             "SAVE", "CLEAR", "PAUSE", "GHOST", "MLCAD", "LPUB", "SYNTH", "SYNTHESIZED",
-             "ROTATION", "BUFEXCHG", "GROUP"}
+# First words that make a type-0 line a meta command, not a description/title. Meta commands
+# are uppercase: sentence-case words ("Clear windscreen", "Step ladder") are fine, as in pyldraw3.
+NOT_TITLE = {"BFC", "FILE", "NOFILE", "STEP", "ROTSTEP", "WRITE", "PRINT", "SAVE", "CLEAR", "PAUSE",
+             "GHOST", "MLCAD", "LPUB", "SYNTH", "SYNTHESIZED", "ROTATION", "BUFEXCHG", "GROUP"}
 
 
 # ---------------------------------------------------------------- reading
@@ -80,7 +80,8 @@ def is_title(line):
     if len(w) < 2 or w[0] != "0":
         return False
     text = line.split(None, 1)[1].strip()
-    return not text.startswith(("//", "/*", "!", "0 ")) and w[1].upper() not in NOT_TITLE
+    return (not text.startswith(("//", "/*", "!", "0 ")) and w[1] not in NOT_TITLE
+            and w[1].upper() not in ("NAME:", "AUTHOR:"))
 
 
 def type1(line):

@@ -15,7 +15,16 @@ See [docs/output-contract.md](docs/output-contract.md) for the exact format, and
 ## Setup (once)
 
 ```sh
-./setup.sh          # uv (or venv + pip); needs Python >= 3.12 and the `claude` CLI, logged in
+./setup.sh          # uv (or venv + pip); needs Python >= 3.12 and the Cline CLI (`npm install -g cline`)
+```
+
+The LLM calls go through the Cline CLI, in a **dedicated Cline profile**. Your own Cline settings,
+MCP servers and history stay untouched, and the calls don't carry MCP tool schemas. Create the
+profile once with your z.ai key:
+
+```sh
+cline auth -p openai-compatible -k <api-key> -b https://api.z.ai/api/coding/paas/v4 \
+  -m glm-5.3 --data-dir ~/.cline/ldraw-annotator
 ```
 
 ## Use
@@ -28,11 +37,13 @@ See [docs/output-contract.md](docs/output-contract.md) for the exact format, and
 - **Resume.** If a run is aborted, run the same command again.
 - **Speed.**
   - Only part references reach the LLM: geometry is set aside and copied verbatim.
-  - Each LLM call is a single-shot structured answer (`claude -p --json-schema`) over a compact
-    digest.
+  - Each LLM call is a single-shot JSON answer (`cline --plan --json`) over a compact digest,
+    validated (and repaired where harmless) by the tool.
   - Calls of all models share one pool of `-j` workers.
-- **Models.** `--split-model` (default `sonnet`) decides the hierarchy. `--refine-model` (default
-  `haiku`) rewrites parent descriptions.
+- **Models.** `--provider` (default `openai-compatible`). `--split-model` (default `glm-5.3`)
+  decides the hierarchy. `--refine-model` (default `glm-5.3-flash`) rewrites parent descriptions.
+  `--thinking` sets the reasoning effort (default `low`; GLM's default reasoning made calls
+  ~10x slower). `--cline-dir` selects another profile.
 
 ## Store results in the DB (manual)
 
@@ -53,7 +64,7 @@ through their triggers.
 | `ldraw_annotator/digest.py` | the compact views the LLM reads |
 | `ldraw_annotator/plan.py` | answer schemas, validation, applying splits |
 | `ldraw_annotator/check.py` | lossless and contract verification |
-| `ldraw_annotator/run.py` | batch orchestration, `claude -p` calls, resume, status |
+| `ldraw_annotator/run.py` | batch orchestration, Cline calls, resume, status |
 | `ldraw_annotator/db.py` | db-sync |
 | `scripts/add_parts_descriptions.py` | part comments (standalone script, also used by the pipeline) |
 | `prompts/`, `docs/annotation-guide.md` | what the LLM is told |

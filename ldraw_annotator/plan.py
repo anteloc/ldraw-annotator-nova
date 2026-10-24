@@ -70,7 +70,7 @@ def description_error(text):
     if len(text) > MAX_DESCRIPTION or any(ord(c) < 32 for c in text):
         return f"description must be one line of at most {MAX_DESCRIPTION} characters"
     if not mpd.is_title("0 " + text.strip()):
-        return "description must be plain text (not starting with //, /*, !, Name:, STEP...)"
+        return "description must be plain text (not starting with //, /*, !, Name:, or an uppercase meta command like STEP)"
     return None
 
 

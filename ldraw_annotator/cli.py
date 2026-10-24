@@ -50,8 +50,12 @@ def main(argv=None):
     p.add_argument("--out", required=True, help="directory for annotated .mpd files")
     p.add_argument("--work", default="work", help="work directory (resume state)")
     p.add_argument("-j", "--jobs", type=int, default=4, help="parallel LLM calls (and models)")
-    p.add_argument("--split-model", default="sonnet")
-    p.add_argument("--refine-model", default="haiku")
+    p.add_argument("--provider", default=run.PROVIDER, help="Cline provider id")
+    p.add_argument("--split-model", default=run.SPLIT_MODEL, help="model that decides the hierarchy")
+    p.add_argument("--refine-model", default=run.REFINE_MODEL, help="model for parent descriptions")
+    p.add_argument("--thinking", default=run.THINKING, choices=["none", "low", "medium", "high", "xhigh"],
+                   help="reasoning effort (default: %(default)s, the fastest that answers well)")
+    p.add_argument("--cline-dir", default=str(run.CLINE_DIR), help="dedicated Cline profile (--data-dir)")
     p.add_argument("--force", action="store_true", help="redo models that already have an output")
     p.add_argument("--no-pyldraw", action="store_true", help="skip the pyldraw3 reparse in check")
 
@@ -98,7 +102,7 @@ def main(argv=None):
 def dispatch(args):
     if args.cmd == "run":
         runner = run.Runner(args.out, args.work, args.jobs, args.split_model, args.refine_model,
-                            args.force, not args.no_pyldraw)
+                            args.force, not args.no_pyldraw, args.provider, args.cline_dir, args.thinking)
         results = runner.run(inputs(args.inputs))
         return (0 if all(r["status"] == "done" for r in results) else 1), results
     if args.cmd == "status":

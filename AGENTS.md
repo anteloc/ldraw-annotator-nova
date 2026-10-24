@@ -16,8 +16,10 @@ The format of the result is specified in [docs/output-contract.md](docs/output-c
 - Models that already have an output are skipped. Use `--force` to redo them.
 - Exit code 0 means every model is done and verified. 1 means some model failed its check (see
   `status` and `work/<model>/check.json`). 2 means bad input.
-- Nothing to install, write or research: the tool calls the LLM itself (`claude -p`), checks every
-  answer, and verifies every output.
+- Nothing to install, write or research: the tool calls the LLM itself (Cline CLI, dedicated
+  profile `~/.cline/ldraw-annotator`), checks every answer, and verifies every output.
+- If `run` says there's no Cline profile, ask the user to create it (README, "Setup"). Never copy
+  credentials yourself.
 
 ## How it works (so you can debug it)
 
