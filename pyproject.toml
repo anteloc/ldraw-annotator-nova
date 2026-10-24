@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ldraw-annotator-nova"
+version = "0.1.0"
+description = "Fast, resumable annotation of LDraw models: submodel hierarchy, descriptions and part comments"
+requires-python = ">=3.12"
+# The pipeline itself is stdlib-only; pyldraw3 is only used by `check` to prove
+# that consumers (which parse with pyldraw3) read our output as intended.
+dependencies = ["pyldraw3==1.7.0"]
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1"]
+
+[project.scripts]
+ldraw-annotator = "ldraw_annotator.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ldraw_annotator*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

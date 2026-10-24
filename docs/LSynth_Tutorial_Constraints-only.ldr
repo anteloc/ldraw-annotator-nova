@@ -1,0 +1,15 @@
+0 LSynth_Tutorial_Constraints-only
+0 Name: LSynth_Tutorial_Constraints-only.ldr
+0 Author: Holly Wood
+0 Unofficial Model
+0 ROTATION CENTER 0 0 0 1 "Custom" 
+0 ROTATION CONFIG 0 0
+1 47 120 10 7 -1 0 0 0 1 0 0 0 -1 4694c01.dat
+0 SYNTH BEGIN TECHNIC_PNEUMATIC_HOSE 1
+0 SYNTH SHOW
+1 2 0 0 0 0 0 1 0 1 0 -1 0 0 LS02.dat
+1 1 30 -40 20 0 -1 0 0 0 1 -1 0 0 LS02.dat
+1 1 70 -8 0 0 -1 0 0 0 1 -1 0 0 LS02.dat
+1 4 110 -8 0 0 -1 0 0 0 1 -1 0 0 LS02.dat
+0 SYNTH END
+0

@@ -1,0 +1,29 @@
+# python ignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pycache
+*.egg-info
+dist/
+build/
+.pytest_cache/
+
+# virtual environment
+venv/
+.venv/
+# IDEs
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+Thumbs.db
+
+# generated
+output/
+work/
+.cache/
+uv.lock.bak
+
+prompts-local/
