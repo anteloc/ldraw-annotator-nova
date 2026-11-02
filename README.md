@@ -12,16 +12,62 @@ Each output has:
 - a **part comment** above every part: `0 // Plate  2 x  2 (black)`;
 - **flexible parts** (hoses, cables, flex axles…) in their own submodels.
 
+## Before and after
+
+Set 106-1, a small UNICEF car (in [tests/fixtures/](tests/fixtures/)), annotated by the tool.
+
+**Before.** Four submodels with names but no real descriptions. Everything that makes the car
+(chassis, body, doors, roof, lights) is one flat list of 45 parts in `car.ldr`.
+
+```mermaid
+flowchart TD
+    main["106 - main.ldr<br/>“main”"]
+    car["106 - car.ldr<br/>“car”<br/>45 loose parts"]
+    wheel["106 - wheel assembly.ldr<br/>“wheel assembly”<br/>2 parts"]
+    fig["106 - Minifig.ldr<br/>“Minifig”<br/>10 parts"]
+    main --> car
+    main --> fig
+    car -->|×5| wheel
 ```
-0 FILE 106 - car.ldr
-0 Blue UNICEF car built on a black chassis with steering wheel, four grey wheels and a spare, …
-0 Name: 106 - car.ldr
-…
-0 FILE 106 - chassis.ldr
-0 Black car chassis: long plates and car base with mudguards, steering stand and wheel, wheel pin and red rear lights
-…
-0 // Plate  2 x 10 (black)
-1 0 0 0 0 1 0 0 0 1 0 0 0 1 3832.dat
+
+**After.** The same 45 parts are grouped into the assemblies a builder would name. Every
+submodel says what it is. The new submodels are highlighted.
+
+```mermaid
+flowchart TD
+    main["106 - main.ldr<br/>Complete model: blue UNICEF car<br/>with a smiling driver minifig"]
+    car["106 - car.ldr<br/>Blue UNICEF car on a black chassis,<br/>with four grey wheels and a spare"]
+    chassis["106 - chassis.ldr<br/>Black chassis: plates, car base, mudguards,<br/>steering wheel, red rear lights<br/>19 parts"]
+    wheels["106 - wheels.ldr<br/>Wheel set: four wheels and a spare<br/>on wheel-pin plates<br/>2 parts"]
+    wheel["106 - wheel assembly.ldr<br/>Light grey rim with black tyre<br/>2 parts"]
+    body["106 - cabin-body.ldr<br/>Blue body with UNICEF logo panels<br/>10 parts"]
+    front["106 - front-end.ldr<br/>Headlight bricks, yellow lights,<br/>black grille<br/>8 parts"]
+    doors["106 - doors.ldr<br/>Pair of blue hinged doors<br/>2 parts"]
+    roof["106 - hinged-roof.ldr<br/>Clear windscreen and blue hinged roof<br/>4 parts"]
+    fig["106 - Minifig.ldr<br/>Driver minifig: brown hair,<br/>smiling head, blue torso<br/>10 parts"]
+    main --> car
+    main --> fig
+    car --> chassis
+    car --> wheels
+    car --> body
+    wheels -->|×5| wheel
+    body --> front
+    body --> doors
+    body --> roof
+    classDef new fill:#d9f2e3,stroke:#2e7d4f,color:#123
+    class chassis,wheels,body,front,doors,roof new
+```
+
+Inside each submodel, every part gets a comment naming it and its colour:
+
+```
+Before                                   After
+0 FILE 106 - car.ldr                     0 FILE 106 - chassis.ldr
+0 car                                    0 Black car chassis: long plates and car base with mudguards, …
+0 Name: 106 - car.ldr                    0 Name: 106 - chassis.ldr
+…                                        …
+1 0 0 0 0 1 0 0 0 1 0 0 0 1 3832.dat     0 // Plate  2 x 10 (black)
+                                         1 0 0 0 0 1 0 0 0 1 0 0 0 1 3832.dat
 ```
 
 Nothing is lost: every part, colour, position and step of the input is still there. The exact

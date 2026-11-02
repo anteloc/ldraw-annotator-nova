@@ -4,6 +4,45 @@ Turns unannotated LDraw models (`.ldr`/`.mpd`, any size) into annotated, self-co
 files: a semantic submodel hierarchy, a description per submodel, a `0 //` comment per part.
 The format of the result is specified in [docs/output-contract.md](docs/output-contract.md).
 
+## What it achieves
+
+Example: `tests/fixtures/106-1.mpd`, from a real run.
+
+Input: names only (`0 car`), and the whole car is one flat list of 45 parts.
+
+```mermaid
+flowchart TD
+    main["main.ldr: “main”"] --> car["car.ldr: “car”, 45 loose parts"]
+    main --> fig["Minifig.ldr: “Minifig”, 10 parts"]
+    car -->|×5| wheel["wheel assembly.ldr: “wheel assembly”, 2 parts"]
+```
+
+Output: the same 45 parts regrouped into named assemblies, one description per submodel, and a
+`0 // <part> (<colour>)` comment per part. `*` marks new submodels.
+
+```mermaid
+flowchart TD
+    main["main.ldr: Complete model: blue UNICEF car with driver minifig"] --> car["car.ldr: Blue UNICEF car on a black chassis"]
+    main --> fig["Minifig.ldr: Driver minifig, 10 parts"]
+    car --> chassis["*chassis.ldr: Black chassis, steering wheel, rear lights, 19 parts"]
+    car --> wheels["*wheels.ldr: Four wheels and a spare, 2 parts"]
+    car --> body["*cabin-body.ldr: Blue body with UNICEF panels, 10 parts"]
+    wheels -->|×5| wheel["wheel assembly.ldr: Grey rim with black tyre, 2 parts"]
+    body --> front["*front-end.ldr: Headlights, grille, 8 parts"]
+    body --> doors["*doors.ldr: Pair of hinged doors, 2 parts"]
+    body --> roof["*hinged-roof.ldr: Windscreen and hinged roof, 4 parts"]
+```
+
+What it adds:
+- structure: new submodels, each a unit a builder would name. Depth is decided per branch, and a
+  section is a leaf when splitting it makes no sense;
+- meaning: a description per submodel, kebab-case names, optional `0 !KEYWORDS`;
+- part comments.
+
+What it never changes: each part occurrence's world placement and colour. New submodels are
+referenced with the identity matrix, so moved part lines stay byte-for-byte the same. `check`
+proves this for every output.
+
 ## Annotate models (the normal case)
 
 ```sh
