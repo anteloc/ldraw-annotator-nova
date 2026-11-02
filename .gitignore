@@ -27,3 +27,7 @@ work/
 uv.lock.bak
 
 prompts-local/
+
+# SQLite sidecar files
+*.db-shm
+*.db-wal

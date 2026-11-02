@@ -11,9 +11,9 @@ Segments get no part comments and no shape description. See ../lsynth-nova/READM
 
 import re
 
-from . import mpd
+from . import mpd, parts
 
-# Segment parts per kind, from ../lsynth-nova/lsynth_nova/data/lsynth.mpd (hose/band definitions),
+# Segment parts per kind, from LSynth's lsynth.mpd (hose/band definitions),
 # including the newer names of renamed parts (e.g. 79 -> 71944k01).
 SEGMENTS = {
     "pneumatic hose": "ls20 ls21 ls22 ls23",
@@ -94,7 +94,7 @@ def extract(ir, section, body):
             if end < len(body) and body[end].startswith("0 LPUB PLI END"):
                 end += 1
             kind = synth_kind(m.group(2))
-            colour = mpd.apd.COLOURS_DESCRIPTIONS.get(m.group(3) or "", "")
+            colour = parts.COLOURS_DESCRIPTIONS.get(m.group(3) or "", "")
             desc = f"Flexible {kind}{', ' + colour if colour else ''} (LSynth-synthesized)"
             out.append(_add_flex(ir, kind, desc, body[start:end]))
             i = end

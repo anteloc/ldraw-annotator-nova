@@ -1,7 +1,6 @@
 """Batch orchestrator: prep -> rounds of LLM decisions -> refine -> write -> check. Resumable.
 
-Each LLM call is one single-shot Cline CLI run (`cline --plan --json`) in a dedicated Cline
-profile (--data-dir, see README): no MCP servers, no tools needed, your own Cline untouched.
+Each LLM call is one single-shot chat completion (llm.py, any provider through any-llm).
 The system prompt is a prompt + the guide + the answer's JSON Schema (identical for every call,
 so cacheable); the prompt is a digest; the reply's JSON object is validated by plan.py. Calls of all
 models in the batch share one worker pool.
@@ -12,37 +11,32 @@ Work directory layout (the filesystem is the manifest; an abort never redoes fin
   work/<model>/ir.r1.json          IR after round 1, and so on
   work/<model>/units/refine.json   the bottom-up description call
   work/<model>/check.json          verification report of the written output
-  work/<model>/log.jsonl           one line per call: unit, seconds, tokens, cost, errors
+  work/<model>/log.jsonl           one line per call: unit, seconds, tokens, errors
   <out>/<model>.mpd                the result, written last
 """
 
 import json
 import re
-import shutil
-import subprocess
-import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from importlib import resources
 from pathlib import Path
 
-from . import check, digest, mpd, plan
+from . import check, digest, llm, mpd, plan
 
 MAX_ROUNDS = 10  # safety cap; recursion normally ends when every open section is a leaf
 CALL_TIMEOUT = 900
 ATTEMPTS = 3  # retries ask again only for the rejected sections, with the reasons
 RATE_LIMIT_WAITS = [10, 20, 40, 80, 160]  # seconds to wait before re-sending a rate-limited call
 
-# Defaults: z.ai GLM through Cline's OpenAI-compatible provider, in a dedicated Cline profile.
-PROVIDER = "openai-compatible"
-SPLIT_MODEL = "glm-5.3"
-REFINE_MODEL = "glm-5.3-flash"
-# Measured on 106-1: "low" answers in ~9 s; the provider default and "none" (not honoured by
-# GLM) stream long reasoning and take 90-130 s for the same plan.
+# Defaults: z.ai GLM (set ZAI_API_KEY; ZAI_BASE_URL for the GLM Coding Plan endpoint).
+SPLIT_MODEL = "zai:glm-5.3"
+REFINE_MODEL = "zai:glm-5.3-flash"
+# Measured on 106-1: "low" answers in 1-9 s per call; the provider default and "none" (not
+# honoured by GLM) stream long reasoning and took 90-130 s for the same plan.
 THINKING = "low"
-CLINE_DIR = Path.home() / ".cline" / "ldraw-annotator"
-AUTH_HELP = ("cline auth -p openai-compatible -k <api-key> -b https://api.z.ai/api/coding/paas/v4 "
-             "-m glm-5.3 --data-dir {dir}")
+PROMPTS = resources.files(__package__) / "prompts"
 
 
 def model_key(path):
@@ -55,25 +49,20 @@ def save_json(path, data):
 
 class Runner:
     def __init__(self, out_dir, work_dir="work", jobs=4, split_model=SPLIT_MODEL, refine_model=REFINE_MODEL,
-                 force=False, pyldraw=True, provider=PROVIDER, cline_dir=CLINE_DIR, thinking=THINKING):
+                 force=False, pyldraw=True, thinking=THINKING):
         self.out, self.work = Path(out_dir), Path(work_dir)
         self.jobs, self.force, self.pyldraw = jobs, force, pyldraw
         self.models = {"split": split_model, "refine": refine_model}
-        self.provider, self.cline_dir, self.thinking = provider, Path(cline_dir).expanduser(), thinking
-        if not shutil.which("cline"):
-            raise ValueError("the 'cline' CLI is not installed (npm install -g cline)")
-        if not (self.cline_dir / "settings" / "providers.json").exists():
-            raise ValueError(f"no Cline profile in {self.cline_dir}; create it once with: "
-                             + AUTH_HELP.format(dir=self.cline_dir))
-        # An empty working directory outside the project: Cline loads no project rules or files.
-        self.cwd = Path(tempfile.gettempdir()) / "ldraw-annotator-cwd"
-        self.cwd.mkdir(exist_ok=True)
+        self.thinking = thinking
+        for model in self.models.values():
+            if ":" not in model:
+                raise ValueError(f"model {model!r} is not provider:model (e.g. {SPLIT_MODEL}, ollama:qwen3:8b)")
         self.llm = ThreadPoolExecutor(jobs)
         self.log_lock = threading.Lock()
-        guide = (mpd.ROOT / "docs" / "annotation-guide.md").read_text()
+        guide = (PROMPTS / "annotation-guide.md").read_text()
         self.system = {}
         for kind, schema in (("split", plan.SPLIT_SCHEMA), ("refine", plan.REFINE_SCHEMA)):
-            text = (mpd.ROOT / "prompts" / f"{kind}.md").read_text()
+            text = (PROMPTS / f"{kind}.md").read_text()
             self.system[kind] = (text + ("\n\n" + guide if kind == "split" else "")
                                  + "\n\n## Answer format\n\nReply with ONE JSON object and nothing else "
                                  "(no prose, no code fences, no tools), valid against this JSON Schema:\n\n"
@@ -132,7 +121,12 @@ class Runner:
 
         parents = digest.refine_ids(ir)
         if parents:
-            plan.apply_refine(ir, self.unit(wd, ir, "refine", parents, "refine"))
+            answer = self.unit(wd, ir, "refine", parents, "refine")
+            plan.apply_refine(ir, answer)
+            answered = {sp["id"] for sp in answer["sections"]}
+            if len(answered) < len(parents):  # these keep their round descriptions; flag them
+                ir.setdefault("failed_units", []).append(
+                    f"refine: {', '.join(sid for sid in parents if sid not in answered)}")
             save_json(wd / "ir.final.json", ir)
 
         plan.finalize_names(ir)
@@ -206,31 +200,18 @@ class Runner:
         return result
 
     def call(self, kind, schema, text):
-        """One headless Cline call. Returns (the reply's JSON object or None, log info)."""
-        cmd = ["cline", "--plan", "--json", "--data-dir", str(self.cline_dir), "-P", self.provider,
-               "-m", self.models[kind], "-c", str(self.cwd), "-t", str(CALL_TIMEOUT), "-s", self.system[kind]]
-        if self.thinking:
-            cmd += ["--thinking", self.thinking]
-        # The digest is the prompt argument: this Cline version ignores piped stdin in JSON mode.
-        cmd.append(text)
+        """One LLM call. Returns (the reply's JSON object or None, log info)."""
         t0 = time.time()
         info = {"model": self.models[kind], "input_chars": len(text)}
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                                  timeout=CALL_TIMEOUT + 60, cwd=self.cwd)
-        except (subprocess.TimeoutExpired, OSError) as e:
-            return None, dict(info, seconds=round(time.time() - t0, 1), error=f"{type(e).__name__}: {e}")
-        result = next((e for e in map(json_line, reversed(proc.stdout.splitlines()))
-                       if e.get("type") == "run_result"), {})
-        usage = result.get("usage") or {}
-        info.update(seconds=round(time.time() - t0, 1), cost=usage.get("totalCost"),
-                    input_tokens=usage.get("inputTokens"), output_tokens=usage.get("outputTokens"),
-                    cache_read=usage.get("cacheReadTokens"), cache_write=usage.get("cacheWriteTokens"))
-        if result.get("finishReason") != "completed":
-            detail = result.get("text") or proc.stderr.strip()[-300:] or f"exit code {proc.returncode}"
-            return None, dict(info, error=f"cline call failed: {str(detail)[:300]}")
+            reply, usage = llm.chat(self.models[kind], self.system[kind], text, self.thinking, CALL_TIMEOUT)
+        except llm.RateLimited as e:
+            return None, dict(info, seconds=round(time.time() - t0, 1), error=f"rate limit: {e}"[:300])
+        except Exception as e:  # network, auth, provider errors: the attempt fails, the batch goes on
+            return None, dict(info, seconds=round(time.time() - t0, 1), error=f"{type(e).__name__}: {e}"[:300])
+        info.update(usage, seconds=round(time.time() - t0, 1))
         try:
-            return parse_answer(result.get("text") or ""), dict(info, error=None)
+            return parse_answer(reply), dict(info, error=None)
         except ValueError as e:
             return None, dict(info, error=f"reply is not one JSON object: {e}")
 
@@ -238,13 +219,6 @@ class Runner:
         wd.mkdir(parents=True, exist_ok=True)
         with self.log_lock, open(wd / "log.jsonl", "a") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-
-def json_line(line):
-    try:
-        return json.loads(line)
-    except ValueError:
-        return {}
 
 
 def parse_answer(text):
@@ -272,6 +246,8 @@ def fail(ir, uid, ids):
 def status(work_dir="work", out_dir=None):
     """Per-model progress, derived from the files in the work directory."""
     rows = []
+    if not Path(work_dir).is_dir():
+        return rows
     for wd in sorted(p for p in Path(work_dir).iterdir() if p.is_dir() and not p.name.startswith(".")):
         calls = [json.loads(l) for l in (wd / "log.jsonl").read_text().splitlines()] \
             if (wd / "log.jsonl").exists() else []
@@ -288,7 +264,7 @@ def status(work_dir="work", out_dir=None):
         rows.append({"model": wd.name, "state": state, "rounds": rounds[-1] if rounds else None,
                      "calls": len(calls), "failed_calls": sum(1 for c in calls if c.get("errors")),
                      "llm_seconds": round(sum(c.get("seconds") or 0 for c in calls), 1),
-                     "cost_usd": round(sum(c.get("cost") or 0 for c in calls), 4),
+                     "tokens": sum((c.get("input_tokens") or 0) + (c.get("output_tokens") or 0) for c in calls),
                      "seconds": report and report.get("seconds"),
                      "failed_units": report.get("failed_units") if report else [],
                      "errors": report["errors"][:3] if report else []})

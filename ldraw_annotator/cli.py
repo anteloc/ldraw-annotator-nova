@@ -1,14 +1,15 @@
-"""Command line: ./ldraw-annotator <command> ... (JSON to stdout).
+"""Command line: ldraw-annotator <command> ... (JSON to stdout).
 
 Exit codes: 0 ok, 1 a check failed / some model did not finish, 2 bad input or error.
 """
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
-from . import check, db, digest, mpd, plan, run
+from . import check, db, digest, mpd, parts, plan, run
 
 LDRAW_SUFFIXES = {".ldr", ".mpd"}
 
@@ -44,52 +45,58 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="ldraw-annotator", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
+    # Every command but status reads the LDraw info DB (part and colour descriptions).
+    db_arg = argparse.ArgumentParser(add_help=False)
+    db_arg.add_argument("--db", help=f"LDraw info DB, ldraw-info.db (default: ${parts.DB_ENV})")
 
-    p = sub.add_parser("run", help="annotate files/directories (resumable batch)")
+    p = sub.add_parser("run", parents=[db_arg], help="annotate files/directories (resumable batch)")
     p.add_argument("inputs", nargs="+")
     p.add_argument("--out", required=True, help="directory for annotated .mpd files")
     p.add_argument("--work", default="work", help="work directory (resume state)")
     p.add_argument("-j", "--jobs", type=int, default=4, help="parallel LLM calls (and models)")
-    p.add_argument("--provider", default=run.PROVIDER, help="Cline provider id")
-    p.add_argument("--split-model", default=run.SPLIT_MODEL, help="model that decides the hierarchy")
-    p.add_argument("--refine-model", default=run.REFINE_MODEL, help="model for parent descriptions")
+    p.add_argument("--split-model", default=os.environ.get("LDRAW_ANNOTATOR_SPLIT_MODEL", run.SPLIT_MODEL),
+                   help="provider:model that decides the hierarchy (default: %(default)s, "
+                        "or $LDRAW_ANNOTATOR_SPLIT_MODEL)")
+    p.add_argument("--refine-model", default=os.environ.get("LDRAW_ANNOTATOR_REFINE_MODEL", run.REFINE_MODEL),
+                   help="provider:model that rewrites parent descriptions (default: %(default)s, "
+                        "or $LDRAW_ANNOTATOR_REFINE_MODEL)")
     p.add_argument("--thinking", default=run.THINKING, choices=["none", "low", "medium", "high", "xhigh"],
                    help="reasoning effort (default: %(default)s, the fastest that answers well)")
-    p.add_argument("--cline-dir", default=str(run.CLINE_DIR), help="dedicated Cline profile (--data-dir)")
     p.add_argument("--force", action="store_true", help="redo models that already have an output")
     p.add_argument("--no-pyldraw", action="store_true", help="skip the pyldraw3 reparse in check")
 
     p = sub.add_parser("status", help="progress of a batch")
     p.add_argument("--work", default="work")
 
-    p = sub.add_parser("prep", help="prepare one model and save its IR (ir.r0.json)")
+    p = sub.add_parser("prep", parents=[db_arg], help="prepare one model and save its IR (ir.r0.json)")
     p.add_argument("input")
     p.add_argument("--work", default="work")
 
-    p = sub.add_parser("digest", help="print what an agent sees")
+    p = sub.add_parser("digest", parents=[db_arg], help="print what an agent sees")
     p.add_argument("model", help="model file, or model name in the work directory")
     p.add_argument("--work", default="work")
     p.add_argument("--tree", action="store_true", help="tree view (refine) instead of units")
 
-    p = sub.add_parser("apply", help="validate and apply one split plan to a model's latest IR")
+    p = sub.add_parser("apply", parents=[db_arg], help="validate and apply one split plan to a model's latest IR")
     p.add_argument("model")
     p.add_argument("plan", help="plan JSON file")
     p.add_argument("--work", default="work")
 
-    p = sub.add_parser("write", help="write a model's latest IR as .mpd")
+    p = sub.add_parser("write", parents=[db_arg], help="write a model's latest IR as .mpd")
     p.add_argument("model")
     p.add_argument("output")
     p.add_argument("--work", default="work")
 
-    p = sub.add_parser("check", help="verify an annotated output against its input")
+    p = sub.add_parser("check", parents=[db_arg], help="verify an annotated output against its input")
     p.add_argument("input")
     p.add_argument("output")
     p.add_argument("--no-pyldraw", action="store_true")
 
-    p = sub.add_parser("db-sync", help="(user) store annotated models' descriptions/hierarchy in the DB")
+    p = sub.add_parser("db-sync", parents=[db_arg], help="(user) store annotated models' descriptions/hierarchy in the DB")
     p.add_argument("inputs", nargs="+", help="annotated .mpd files or directories")
 
     args = ap.parse_args(argv)
+    parts.db_file = getattr(args, "db", None)  # else parts falls back to $LDRAW_ANNOTATOR_DB
     try:
         code, result = dispatch(args)
     except (FileNotFoundError, ValueError) as e:
@@ -102,11 +109,12 @@ def main(argv=None):
 def dispatch(args):
     if args.cmd == "run":
         runner = run.Runner(args.out, args.work, args.jobs, args.split_model, args.refine_model,
-                            args.force, not args.no_pyldraw, args.provider, args.cline_dir, args.thinking)
+                            args.force, not args.no_pyldraw, args.thinking)
         results = runner.run(inputs(args.inputs))
         return (0 if all(r["status"] == "done" for r in results) else 1), results
     if args.cmd == "status":
         return 0, run.status(args.work)
+    parts.db_path()  # fail early with a clear message when the DB is missing
     if args.cmd == "prep":
         ir = mpd.load(args.input)
         out = Path(args.work) / run.model_key(args.input) / "ir.r0.json"

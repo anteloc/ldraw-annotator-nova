@@ -1,4 +1,4 @@
-"""db-sync (run by the user, not by agents): store annotated models in data/ldraw-info.db.
+"""db-sync (run by the user, not by agents): store annotated models in the LDraw info DB (--db).
 
   MODELS_DESCRIPTIONS(model, description)                 root description per model file
   SUBMODELS_DESCRIPTIONS(model, submodel, description)    every model/flex section but the root
@@ -10,7 +10,7 @@ A model's previous rows are replaced. The existing triggers keep the *_FTS table
 import sqlite3
 from collections import Counter
 
-from . import check, mpd
+from . import check, mpd, parts
 
 REFERENCES_TABLE = """CREATE TABLE IF NOT EXISTS SUBMODELS_REFERENCES (
     model  VARCHAR NOT NULL,
@@ -27,7 +27,7 @@ def description(section):
 
 
 def sync(files):
-    conn = sqlite3.connect(mpd.apd.DB_FILE)
+    conn = sqlite3.connect(parts.db_path())
     report = []
     try:
         conn.execute(REFERENCES_TABLE)

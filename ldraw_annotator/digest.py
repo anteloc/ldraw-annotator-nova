@@ -9,10 +9,9 @@ Positions are LDU in the section's own frame (x right, y DOWN, z towards viewer;
 8 LDU = 1 plate, 24 LDU = 1 brick). Tree view: the hierarchy with descriptions (bottom-up refine).
 """
 
-import sqlite3
 from functools import cache
 
-from . import mpd
+from . import mpd, parts
 
 PARTS_PER_UNIT = 300  # pack small sections together up to this many items per LLM call
 SECTIONS_PER_UNIT = 30
@@ -21,7 +20,7 @@ SECTIONS_PER_UNIT = 30
 @cache
 def bboxes():
     """Part bounding boxes (local LDU): normalized name -> (min xyz, max xyz)."""
-    conn = sqlite3.connect(mpd.apd.DB_FILE.as_uri() + "?mode=ro", uri=True)
+    conn = parts.connect_ro()
     try:
         return {mpd.normalized(a): ((x0, y0, z0), (x1, y1, z1)) for a, x0, y0, z0, x1, y1, z1 in
                 conn.execute("SELECT alias, min_x, min_y, min_z, max_x, max_y, max_z FROM PART_BBOXES")}
@@ -104,7 +103,7 @@ def item_line(ir, k, item, names):
         return f'i{k} > {child["id"]} "{child["name"]}"{count} "{child.get("desc") or ""}" {pos}'
     comment = next((l[5:] for l in item["lines"] if l.startswith("0 // ")), None)
     if comment is None:  # unknown part: show its file name and colour
-        comment = f"{ref} ({mpd.apd.COLOURS_DESCRIPTIONS.get(colour, colour)})"
+        comment = f"{ref} ({parts.COLOURS_DESCRIPTIONS.get(colour, colour)})"
     return f"i{k} {comment} {pos}"
 
 

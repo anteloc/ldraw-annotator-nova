@@ -20,7 +20,6 @@ IR shape (see load()):
   part section: {"id", "name", "kind": "part", "span": [start, end]}
 """
 
-import importlib.util
 import io
 import os
 import re
@@ -28,18 +27,8 @@ from collections import Counter
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from . import flex
-
-ROOT = Path(__file__).resolve().parents[1]
-
-# The part-description logic lives in scripts/add_parts_descriptions.py (mandated by the task);
-# load it as a module so the pipeline and the standalone script share one implementation.
-_spec = importlib.util.spec_from_file_location(
-    "add_parts_descriptions", ROOT / "scripts" / "add_parts_descriptions.py")
-apd = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(apd)
-
-normalized = apd.normalized
+from . import flex, parts
+from .parts import normalized
 
 # Sections with fewer items are leaves without asking an agent: splitting them could only
 # produce single-item wrappers. Orphan (unreferenced) sections are only described.
@@ -226,7 +215,7 @@ def load(path):
     eols = Counter(l[len(strip(l)):] for l in lines if l.endswith(("\n", "\r")))
     raw, preamble_end = scan(lines, path.name if path.suffix.lower() != ".mpd" else path.stem + ".ldr")
 
-    apd.cache_descriptions_db()
+    parts.cache_descriptions_db()
     sections, order, by_name, refs_of = {}, [], {}, {}
     for n, sec in enumerate(raw, 1):
         sid = f"S{n}"
@@ -299,7 +288,7 @@ def load(path):
                 elif len(w) == 2 and w[1].startswith("!LICENSE"):
                     ir["license"] = ir["license"] or line
         body = flex.extract(ir, s, body)  # LSynth blocks / segment runs -> own flex sections
-        body = apd.annotate_lines(body, extra)
+        body = parts.annotate_lines(body, extra)
         s.setdefault("orphan", False)
         s.update(desc=title, has_title=title is not None, head=head, keywords=[], body=itemize(body),
                  todo=True)  # every existing model section gets described in round 1

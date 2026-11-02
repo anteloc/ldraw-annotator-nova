@@ -6,19 +6,29 @@ build-backend = "setuptools.build_meta"
 name = "ldraw-annotator-nova"
 version = "0.1.0"
 description = "Fast, resumable annotation of LDraw models: submodel hierarchy, descriptions and part comments"
+readme = "README.md"
+license = "AGPL-3.0-only AND CC-BY-SA-4.0"
+license-files = ["LICENSE", "CC-BY-SA-4.0"]
 requires-python = ">=3.12"
-# The pipeline itself is stdlib-only; pyldraw3 is only used by `check` to prove
-# that consumers (which parse with pyldraw3) read our output as intended.
-dependencies = ["pyldraw3==1.7.0"]
+# pyldraw3 is only used by `check` to prove that consumers (which parse with pyldraw3) read our
+# output as intended; any-llm talks to the LLM providers (extras: the providers installed by default).
+dependencies = ["pyldraw3==1.7.0", "any-llm-sdk[zai,ollama]==1.41.0"]
 
 [project.optional-dependencies]
 test = ["pytest==9.1.1"]
+
+[project.urls]
+Homepage = "https://github.com/anteloc/ldraw-annotator-nova"
+Releases = "https://github.com/anteloc/ldraw-annotator-nova/releases"
 
 [project.scripts]
 ldraw-annotator = "ldraw_annotator.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["ldraw_annotator*"]
+
+[tool.setuptools.package-data]
+ldraw_annotator = ["prompts/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

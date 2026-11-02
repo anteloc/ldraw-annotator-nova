@@ -1,12 +1,11 @@
 """Deterministic parts of the pipeline (no LLM): reading, part comments, flexible parts, plans,
-writing and checking. Run: .venv/bin/python -m pytest"""
+writing and checking. Run: uv run pytest"""
 
 from pathlib import Path
 
-from ldraw_annotator import check, digest, mpd, plan
+from ldraw_annotator import check, cli, digest, llm, mpd, parts, plan, run
 
-ROOT = Path(__file__).resolve().parents[1]
-DOCS = ROOT / "docs"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def write_and_check(ir, src, tmp_path, name="out.mpd"):
@@ -16,22 +15,22 @@ def write_and_check(ir, src, tmp_path, name="out.mpd"):
 
 
 def test_part_comments_match_the_canonical_example(tmp_path):
-    ir = mpd.load(DOCS / "106-1.mpd")
-    out, report = write_and_check(ir, DOCS / "106-1.mpd", tmp_path)
+    ir = mpd.load(FIXTURES / "106-1.mpd")
+    out, report = write_and_check(ir, FIXTURES / "106-1.mpd", tmp_path)
     assert report["ok"], report["errors"]
     ours = [l for l in out.read_text().splitlines() if l.startswith("0 //")]
-    expected = [l for l in (DOCS / "106-1-annotated.mpd").read_text().splitlines() if l.startswith("0 //")]
+    expected = [l for l in (FIXTURES / "106-1-annotated.mpd").read_text().splitlines() if l.startswith("0 //")]
     assert ours == expected
 
 
 def test_part_comments_are_idempotent_and_keep_invertnext_last():
-    mpd.apd.cache_descriptions_db()
+    parts.cache_descriptions_db()
     lines = ["0 BFC INVERTNEXT", "1 0 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat", "0 // author note",
              "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat"]
-    once = mpd.apd.annotate_lines(lines)
+    once = parts.annotate_lines(lines)
     assert once[:3] == ["0 // Brick  2 x  4 (black)", "0 BFC INVERTNEXT", lines[1]]
     assert once[3:] == ["0 // author note", "0 // Brick  2 x  4 (red)", lines[3]]
-    assert mpd.apd.annotate_lines(once) == once
+    assert parts.annotate_lines(once) == once
 
 
 def test_crlf_and_bom_are_preserved(tmp_path):
@@ -45,7 +44,7 @@ def test_crlf_and_bom_are_preserved(tmp_path):
 
 
 def test_lsynth_block_becomes_a_flex_submodel(tmp_path):
-    src = DOCS / "LSynth_Tutorial_Synthesis.ldr"
+    src = FIXTURES / "LSynth_Tutorial_Synthesis.ldr"
     ir = mpd.load(src)
     flex = [s for s in ir["sections"].values() if s["kind"] == "flex"]
     assert len(flex) == 1 and flex[0]["keywords"] == ["flexible", "pneumatic hose"]
@@ -57,7 +56,7 @@ def test_lsynth_block_becomes_a_flex_submodel(tmp_path):
 
 
 def test_split_moves_items_keeps_steps_and_is_lossless(tmp_path):
-    ir = mpd.load(DOCS / "106-1.mpd")
+    ir = mpd.load(FIXTURES / "106-1.mpd")
     answer = {"sections": [{"id": "S2", "description": "Blue car", "new": [
         {"name": "chassis", "items": "0-5,44-49", "description": "Chassis with wheels", "keywords": ["chassis"]},
         {"name": "cabin", "items": "34-40", "description": "Doors and roof"}],
@@ -65,7 +64,7 @@ def test_split_moves_items_keeps_steps_and_is_lossless(tmp_path):
     assert plan.repair_split(ir, ["S2"], answer) == ([], [])
     created = plan.apply_split(ir, answer)
     assert [ir["sections"][c]["name"] for c in created] == ["106 - chassis.ldr", "106 - cabin.ldr"]
-    out, report = write_and_check(ir, DOCS / "106-1.mpd", tmp_path)
+    out, report = write_and_check(ir, FIXTURES / "106-1.mpd", tmp_path)
     assert report["ok"], report["errors"]
     lines = out.read_text().splitlines()
     files = [i for i, l in enumerate(lines) if l.startswith("0 FILE")]
@@ -75,7 +74,7 @@ def test_split_moves_items_keeps_steps_and_is_lossless(tmp_path):
 
 
 def test_bad_ranges_are_errors_and_harmless_problems_are_repaired():
-    ir = mpd.load(DOCS / "106-1.mpd")
+    ir = mpd.load(FIXTURES / "106-1.mpd")
     answer = {"sections": [{"id": "S2", "description": "Car", "new": [
         {"name": "far", "items": "48-60", "description": "x"},
         {"name": "one", "items": "3", "description": "x"}]}]}
@@ -92,7 +91,7 @@ def test_bad_ranges_are_errors_and_harmless_problems_are_repaired():
 
 
 def test_describe_only_sections_are_not_split():
-    ir = mpd.load(DOCS / "106-1.mpd")  # S3 (wheel assembly) has 2 items: a leaf without asking
+    ir = mpd.load(FIXTURES / "106-1.mpd")  # S3 (wheel assembly) has 2 items: a leaf without asking
     assert ir["sections"]["S3"]["state"] == "leaf"
     answer = {"sections": [{"id": "S3", "description": "Wheel",
                             "new": [{"name": "x", "items": "0-1", "description": "y"}]}]}
@@ -101,15 +100,15 @@ def test_describe_only_sections_are_not_split():
 
 
 def test_check_detects_a_lost_part(tmp_path):
-    ir = mpd.load(DOCS / "106-1.mpd")
+    ir = mpd.load(FIXTURES / "106-1.mpd")
     body = ir["sections"]["S4"]["body"]
     body.remove(mpd.items(ir["sections"]["S4"])[-1])  # drop the minifig's last part
-    _, report = write_and_check(ir, DOCS / "106-1.mpd", tmp_path)
+    _, report = write_and_check(ir, FIXTURES / "106-1.mpd", tmp_path)
     assert not report["ok"] and any("not lossless" in e for e in report["errors"])
 
 
 def test_digest_lists_items_and_steps():
-    ir = mpd.load(DOCS / "106-1.mpd")
+    ir = mpd.load(FIXTURES / "106-1.mpd")
     text = digest.unit_digest(ir, ["S2"])
     assert 'i19 > S3 "106 - wheel assembly.ldr" [2 items]' in text
     assert "i0 Plate  2 x 10 (black) @0,0,0" in text and "--- step" in text
@@ -135,17 +134,41 @@ def test_meaningless_names_are_renamed_with_their_references(tmp_path):
 
 def test_rate_limited_calls_wait_without_using_an_attempt(tmp_path, monkeypatch):
     import threading
-    from ldraw_annotator import run
-    runner = object.__new__(run.Runner)  # no Cline needed: the call itself is replaced
+    runner = object.__new__(run.Runner)  # no LLM needed: the call itself is replaced
     runner.log_lock = threading.Lock()
     answer = {"sections": [{"id": "S3", "description": "Wheel: grey rim with black tyre", "new": []}]}
-    replies = iter([(None, {"error": "cline call failed: Rate limit reached for requests"}),
-                    (None, {"error": "cline call failed: Rate limit reached for requests"}),
+    replies = iter([(None, {"error": "rate limit: Rate limit reached for requests"}),
+                    (None, {"error": "rate limit: Rate limit reached for requests"}),
                     (answer, {"error": None})])
     runner.call = lambda kind, schema, text: next(replies)
     monkeypatch.setattr(run.time, "sleep", lambda seconds: None)
-    ir = mpd.load(DOCS / "106-1.mpd")
+    ir = mpd.load(FIXTURES / "106-1.mpd")
     result = runner.unit(tmp_path, ir, "r1-u00", ["S3"], "split")
     assert result == answer
     log = [l for l in (tmp_path / "log.jsonl").read_text().splitlines()]
     assert len(log) == 3 and all('"attempt": 1' in l for l in log)
+
+
+def test_llm_failures_become_logged_errors(monkeypatch):
+    runner = object.__new__(run.Runner)
+    runner.models, runner.system, runner.thinking = {"split": "zai:glm-5.3"}, {"split": "prompt"}, "low"
+
+    def rate_limited(*args):
+        raise llm.RateLimited("too many requests")
+    monkeypatch.setattr(llm, "chat", rate_limited)
+    assert "rate limit" in runner.call("split", {}, "digest")[1]["error"]
+
+    monkeypatch.setattr(llm, "chat", lambda *args: ("Sure! Here is my plan.", {"input_tokens": 9}))
+    answer, info = runner.call("split", {}, "digest")
+    assert answer is None and "not one JSON object" in info["error"] and info["input_tokens"] == 9
+
+    monkeypatch.setattr(llm, "chat", lambda *args: ('```json\n{"sections": []}\n```', {}))
+    answer, info = runner.call("split", {}, "digest")
+    assert answer == {"sections": []} and info["error"] is None
+
+
+def test_a_missing_db_is_bad_input(monkeypatch, capsys):
+    monkeypatch.delenv(parts.DB_ENV)
+    assert cli.main(["prep", str(FIXTURES / "106-1.mpd")]) == 2
+    assert "--db" in capsys.readouterr().out
+    assert cli.main(["prep", str(FIXTURES / "106-1.mpd"), "--db", "nowhere.db"]) == 2

@@ -13,7 +13,7 @@ Checks:
 
 from collections import Counter
 
-from . import mpd
+from . import mpd, parts
 
 
 def sections(path):
@@ -105,7 +105,7 @@ def check(input_path, output_path, pyldraw=True):
     errors += contract(out, out_order)
     unknown = sorted({mpd.normalized(t[2]) for s in out.values() if s["kind"] == "model" for l in s["lines"]
                       if (t := mpd.type1(l)) and mpd.normalized(t[2]) not in out
-                      and mpd.normalized(t[2]) not in mpd.apd.PARTS_DESCRIPTIONS})
+                      and mpd.normalized(t[2]) not in parts.PARTS_DESCRIPTIONS})
     if unknown:
         warnings.append(f"references not in the file nor the parts DB: {unknown[:10]}")
     if pyldraw:
@@ -125,7 +125,7 @@ def body(lines):
 
 
 def contract(out, order):
-    mpd.apd.cache_descriptions_db()
+    parts.cache_descriptions_db()
     errors, models = [], [k for k in order if out[k]["kind"] == "model"]
     for k in order:
         s = out[k]
@@ -135,7 +135,7 @@ def contract(out, order):
         lines = out[k]["lines"]
         for j, line in enumerate(lines):
             t = mpd.type1(line)
-            if t and mpd.normalized(t[2]) not in out and mpd.normalized(t[2]) in mpd.apd.PARTS_DESCRIPTIONS:
+            if t and mpd.normalized(t[2]) not in out and mpd.normalized(t[2]) in parts.PARTS_DESCRIPTIONS:
                 above = j - 1
                 while above > 0 and lines[above].startswith("0 BFC INVERTNEXT"):
                     above -= 1

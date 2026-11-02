@@ -5,7 +5,7 @@ agents and tools that consume these files:
 - to **learn from them** in order to generate new models;
 - to **understand their internals** in order to animate their mechanisms.
 
-`./ldraw-annotator check <input> <output>` verifies every rule marked ✔.
+`ldraw-annotator check <input> <output>` verifies every rule marked ✔.
 
 ## 1. One self-contained MPD
 
