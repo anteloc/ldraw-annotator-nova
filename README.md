@@ -30,13 +30,15 @@ format is in [docs/output-contract.md](docs/output-contract.md).
 ## Install
 
 You need Python 3.12 or newer and [uv](https://docs.astral.sh/uv/) (or `pipx`, or `pip`).
+The [latest release](https://github.com/anteloc/ldraw-annotator-nova/releases/latest) shows the
+exact install command; for version `X.Y.Z` it is:
 
 ```sh
 # installs the `ldraw-annotator` command, in its own environment
-uv tool install https://github.com/anteloc/ldraw-annotator-nova/releases/download/v0.1.0/ldraw_annotator_nova-0.1.0-py3-none-any.whl
+uv tool install https://github.com/anteloc/ldraw-annotator-nova/releases/download/vX.Y.Z/ldraw_annotator_nova-X.Y.Z-py3-none-any.whl
 
 # or, with pipx
-pipx install https://github.com/anteloc/ldraw-annotator-nova/releases/download/v0.1.0/ldraw_annotator_nova-0.1.0-py3-none-any.whl
+pipx install https://github.com/anteloc/ldraw-annotator-nova/releases/download/vX.Y.Z/ldraw_annotator_nova-X.Y.Z-py3-none-any.whl
 
 ldraw-annotator --help
 ```
@@ -50,7 +52,7 @@ and tell the tool where it is:
 ```sh
 mkdir -p ~/.local/share/ldraw-annotator
 curl -L -o ~/.local/share/ldraw-annotator/ldraw-info.db \
-  https://github.com/anteloc/ldraw-annotator-nova/releases/download/v0.1.0/ldraw-info.db
+  https://github.com/anteloc/ldraw-annotator-nova/releases/latest/download/ldraw-info.db
 
 export LDRAW_ANNOTATOR_DB=~/.local/share/ldraw-annotator/ldraw-info.db   # e.g. in ~/.zshrc
 ```
@@ -238,8 +240,16 @@ uv run pytest                     # deterministic tests, no LLM; uses data/ldraw
 uv build --wheel                  # dist/ldraw_annotator_nova-<version>-py3-none-any.whl
 ```
 
-To publish a release, bump `version` in `pyproject.toml` and push a tag such as `v0.2.0`. The
-`release` workflow runs the tests, then attaches the wheel and `ldraw-info.db` to that release.
+To publish a release, tag a commit on `master` and push the tag:
+
+```sh
+git tag v0.5.0
+git push origin v0.5.0
+```
+
+The `release` workflow runs the tests, builds the wheel (its version comes from the tag, so there
+is nothing to bump), and attaches it and `ldraw-info.db` to the `v0.5.0` release. Tags on commits
+that aren't on `master` are refused.
 
 How the pipeline works is described in [AGENTS.md](AGENTS.md).
 

@@ -424,7 +424,6 @@ wheels = [
 
 [[package]]
 name = "ldraw-annotator-nova"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "any-llm-sdk", extra = ["ollama"] },
@@ -438,7 +437,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "any-llm-sdk", extras = ["zai", "ollama"], specifier = "==1.41.0" },
+    { name = "any-llm-sdk", extras = ["ollama", "zai"], specifier = "==1.41.0" },
     { name = "pyldraw3", specifier = "==1.7.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = "==9.1.1" },
 ]

@@ -1,10 +1,11 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ldraw-annotator-nova"
-version = "0.1.0"
+# The version is the git tag (v0.5.0 -> 0.5.0), via setuptools-scm.
+dynamic = ["version"]
 description = "Fast, resumable annotation of LDraw models: submodel hierarchy, descriptions and part comments"
 readme = "README.md"
 license = "AGPL-3.0-only AND CC-BY-SA-4.0"
@@ -32,3 +33,5 @@ ldraw_annotator = ["prompts/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools_scm]

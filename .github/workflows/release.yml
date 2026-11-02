@@ -1,5 +1,7 @@
-# Push a tag like v0.1.0: tests run, then the wheel and the LDraw info DB are attached to a
-# GitHub release of that tag (created if it doesn't exist).
+# Release = push a version tag on a master commit:
+#   git tag v0.5.0 && git push origin v0.5.0
+# Tests run, then the wheel (version taken from the tag) and the LDraw info DB are attached to
+# the GitHub release of that tag (created if it doesn't exist).
 name: release
 
 on:
@@ -14,13 +16,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history and tags: setuptools-scm reads the version from the tag
+      - name: The tag must be on master
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/master
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --locked --extra test
       - run: uv run pytest
       - run: uv build --wheel
+      - name: The wheel's version must match the tag
+        run: test -f "dist/ldraw_annotator_nova-${GITHUB_REF_NAME#v}-py3-none-any.whl"
       - name: Upload the wheel and the DB to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes
+          wheel=$(basename dist/*.whl)
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$wheel"
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --generate-notes --notes "Install: \`uv tool install $url\`"
           gh release upload "$GITHUB_REF_NAME" dist/*.whl data/ldraw-info.db --clobber
