@@ -10,7 +10,7 @@ For EVERY listed section, return in the structured output:
   - `[]` means **leaf**: the section is one semantic unit; nobody will split it further.
   - Otherwise, a list of new child submodels. Each has:
     - `items`: item ids as ranges (`"0-7,12"`);
-    - `name`: a short kebab-case name (`front-axle`);
+    - `name`: a short kebab-case name (`front-axle`); the tool adds the model prefix and `.ldr`;
     - `description`: one line;
     - optional `keywords`.
 
@@ -33,3 +33,39 @@ For EVERY listed section, return in the structured output:
 - Item ids refer to the section they're listed under. Every id goes to at most one new submodel.
 - Write descriptions for the **new** children too. A section's own description should reflect
   what stays in it after the split (its children included, as parts of the whole).
+
+## Reading the digest
+
+- `## S4 "8466 - cab.ldr" -- decide: leaf, or split one level` heads each section. The next lines
+  give:
+  - its item count, where it's used (`2x in S1`), and its size in studs (1 stud = 20 LDU) and
+    bricks (1 brick = 24 LDU, 1 plate = 8 LDU);
+  - its path from the root;
+  - its current description, which is often just a file name.
+- `i12 Technic Beam 7 (black) @40,-8,120` is a part: its catalogue description, colour, and
+  position in the section's frame.
+  - Coordinates are LDU: x = right, **y = down** (smaller y is higher), z = towards the viewer.
+  - Parts with close positions touch or overlap.
+- `i13 > S7 "8466 - wheel.ldr" [2 items] "Wheel ..." @60,0,-40` is an existing submodel, placed in
+  this section. You can move it into a new child like any part.
+- `--- step` marks the author's build-step boundaries. Parts in the same step are often one
+  sub-assembly.
+- `Flexible ... hose/axle/cable` submodels are flexible parts. They're already isolated; group them
+  with the assembly they belong to, if any.
+
+## Example answer
+
+For a car section `S2` with items 0-49 (marked `decide: leaf, or split one level`) and a minifig
+`S4` (marked the same):
+
+```json
+{"sections": [
+  {"id": "S2", "description": "Blue car with UNICEF logo panels, hinged roof, doors and four wheels",
+   "new": [
+     {"name": "chassis", "items": "0-5,44-49", "description": "Black chassis plates with wheel pin plates and four wheels", "keywords": ["chassis"]},
+     {"name": "cabin", "items": "30-40", "description": "Blue cabin with doors, UNICEF logo panels, windscreen and hinged roof", "keywords": ["body"]}],
+   "groups": [{"items": "20-23", "comment": "headlights"}]},
+  {"id": "S4", "description": "Driver minifig: brown hair, smiling head, blue torso, arms and legs",
+   "keywords": ["minifig"], "new": []}
+]}
+```

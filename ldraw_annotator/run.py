@@ -11,7 +11,7 @@ Work directory layout (the filesystem is the manifest; an abort never redoes fin
   work/<model>/ir.r1.json          IR after round 1, and so on
   work/<model>/units/refine.json   the bottom-up description call
   work/<model>/check.json          verification report of the written output
-  work/<model>/log.jsonl           one line per call: unit, seconds, tokens, errors
+  work/<model>/log.jsonl           one line per call: agent, unit, seconds, tokens, errors
   <out>/<model>.mpd                the result, written last
 """
 
@@ -30,9 +30,9 @@ CALL_TIMEOUT = 900
 ATTEMPTS = 3  # retries ask again only for the rejected sections, with the reasons
 RATE_LIMIT_WAITS = [10, 20, 40, 80, 160]  # seconds to wait before re-sending a rate-limited call
 
-# Defaults: z.ai GLM (set ZAI_API_KEY; ZAI_BASE_URL for the GLM Coding Plan endpoint).
-SPLIT_MODEL = "zai:glm-5.3"
-REFINE_MODEL = "zai:glm-5.3-flash"
+# Default agents (LLMs): z.ai GLM (set ZAI_API_KEY; ZAI_BASE_URL for the GLM Coding Plan endpoint).
+SPLIT_AGENT = "zai:glm-5.3"
+REFINE_AGENT = "zai:glm-5.3-flash"
 # Measured on 106-1: "low" answers in 1-9 s per call; the provider default and "none" (not
 # honoured by GLM) stream long reasoning and took 90-130 s for the same plan.
 THINKING = "low"
@@ -48,15 +48,15 @@ def save_json(path, data):
 
 
 class Runner:
-    def __init__(self, out_dir, work_dir="work", jobs=4, split_model=SPLIT_MODEL, refine_model=REFINE_MODEL,
+    def __init__(self, out_dir, work_dir="work", jobs=4, split_agent=SPLIT_AGENT, refine_agent=REFINE_AGENT,
                  force=False, pyldraw=True, thinking=THINKING):
         self.out, self.work = Path(out_dir), Path(work_dir)
         self.jobs, self.force, self.pyldraw = jobs, force, pyldraw
-        self.models = {"split": split_model, "refine": refine_model}
+        self.agents = {"split": split_agent, "refine": refine_agent}
         self.thinking = thinking
-        for model in self.models.values():
-            if ":" not in model:
-                raise ValueError(f"model {model!r} is not provider:model (e.g. {SPLIT_MODEL}, ollama:qwen3:8b)")
+        for agent in self.agents.values():
+            if ":" not in agent:
+                raise ValueError(f"agent {agent!r} is not provider:agent (e.g. {SPLIT_AGENT}, ollama:qwen3:8b)")
         self.llm = ThreadPoolExecutor(jobs)
         self.log_lock = threading.Lock()
         guide = (PROMPTS / "annotation-guide.md").read_text()
@@ -202,9 +202,9 @@ class Runner:
     def call(self, kind, schema, text):
         """One LLM call. Returns (the reply's JSON object or None, log info)."""
         t0 = time.time()
-        info = {"model": self.models[kind], "input_chars": len(text)}
+        info = {"agent": self.agents[kind], "input_chars": len(text)}
         try:
-            reply, usage = llm.chat(self.models[kind], self.system[kind], text, self.thinking, CALL_TIMEOUT)
+            reply, usage = llm.chat(self.agents[kind], self.system[kind], text, self.thinking, CALL_TIMEOUT)
         except llm.RateLimited as e:
             return None, dict(info, seconds=round(time.time() - t0, 1), error=f"rate limit: {e}"[:300])
         except Exception as e:  # network, auth, provider errors: the attempt fails, the batch goes on

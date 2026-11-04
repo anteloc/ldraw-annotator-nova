@@ -1,4 +1,4 @@
-"""LLM calls through any-llm: a model is "provider:model", e.g. zai:glm-5.3 or ollama:qwen3:8b.
+"""Agent (LLM) calls through any-llm: an agent is "provider:agent", e.g. zai:glm-5.3 or ollama:qwen3:8b.
 
 Keys and endpoints come from each provider's usual environment variables (ZAI_API_KEY,
 ZAI_BASE_URL, OLLAMA_HOST, OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY, ...).
@@ -9,14 +9,14 @@ class RateLimited(Exception):
     pass
 
 
-def chat(model, system, user, thinking=None, timeout=None):
+def chat(agent, system, user, thinking=None, timeout=None):
     """One single-shot call. Returns (reply text, usage dict); raises on failure."""
     # Imported here: any-llm takes over a second to import, and only `run` needs it.
     from any_llm import completion
     from any_llm.exceptions import RateLimitError
     try:
         # The timeout goes on the client: some providers (Ollama) have no per-request timeout.
-        reply = completion(model=model, client_args={"timeout": timeout}, reasoning_effort=thinking or "auto",
+        reply = completion(model=agent, client_args={"timeout": timeout}, reasoning_effort=thinking or "auto",
                            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
     except RateLimitError as e:
         raise RateLimited(str(e)) from e

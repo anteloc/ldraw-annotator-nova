@@ -151,7 +151,7 @@ def test_rate_limited_calls_wait_without_using_an_attempt(tmp_path, monkeypatch)
 
 def test_llm_failures_become_logged_errors(monkeypatch):
     runner = object.__new__(run.Runner)
-    runner.models, runner.system, runner.thinking = {"split": "zai:glm-5.3"}, {"split": "prompt"}, "low"
+    runner.agents, runner.system, runner.thinking = {"split": "zai:glm-5.3"}, {"split": "prompt"}, "low"
 
     def rate_limited(*args):
         raise llm.RateLimited("too many requests")
@@ -172,3 +172,21 @@ def test_a_missing_db_is_bad_input(monkeypatch, capsys):
     assert cli.main(["prep", str(FIXTURES / "106-1.mpd")]) == 2
     assert "--db" in capsys.readouterr().out
     assert cli.main(["prep", str(FIXTURES / "106-1.mpd"), "--db", "nowhere.db"]) == 2
+
+
+def test_prep_mpd_writes_one_checked_file(tmp_path):
+    src, out = FIXTURES / "LSynth_Tutorial_Synthesis.ldr", tmp_path / "prepped.mpd"
+    assert cli.main(["prep", str(src), "--work", str(tmp_path / "work"), "--mpd", str(out)]) == 0
+    assert check.check(src, out)["ok"]
+    files = [l for l in out.read_text().splitlines() if l.startswith("0 FILE")]
+    assert files == ["0 FILE LSynth_Tutorial_Synthesis.ldr",
+                     "0 FILE LSynth_Tutorial_Synthesis - flex-pneumatic-hose.ldr"]
+    assert not (tmp_path / "work").exists()  # the .mpd replaces the IR
+
+
+def test_prompt_prints_the_instructions(capsys):
+    assert cli.main(["prompt"]) == 0
+    text = capsys.readouterr().out
+    assert text.startswith("# Task") and "ldraw-annotator check" in text and "When to split" in text
+    assert all(k in text for k in plan.KEYWORDS)
+    assert "Reading the digest" not in text and '"new"' not in text

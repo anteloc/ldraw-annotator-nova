@@ -1,4 +1,4 @@
-"""Command line: ldraw-annotator <command> ... (JSON to stdout).
+"""Command line: ldraw-annotator <command> ... (JSON to stdout; `prompt` prints Markdown).
 
 Exit codes: 0 ok, 1 a check failed / some model did not finish, 2 bad input or error.
 """
@@ -53,13 +53,13 @@ def main(argv=None):
     p.add_argument("inputs", nargs="+")
     p.add_argument("--out", required=True, help="directory for annotated .mpd files")
     p.add_argument("--work", default="work", help="work directory (resume state)")
-    p.add_argument("-j", "--jobs", type=int, default=4, help="parallel LLM calls (and models)")
-    p.add_argument("--split-model", default=os.environ.get("LDRAW_ANNOTATOR_SPLIT_MODEL", run.SPLIT_MODEL),
-                   help="provider:model that decides the hierarchy (default: %(default)s, "
-                        "or $LDRAW_ANNOTATOR_SPLIT_MODEL)")
-    p.add_argument("--refine-model", default=os.environ.get("LDRAW_ANNOTATOR_REFINE_MODEL", run.REFINE_MODEL),
-                   help="provider:model that rewrites parent descriptions (default: %(default)s, "
-                        "or $LDRAW_ANNOTATOR_REFINE_MODEL)")
+    p.add_argument("-j", "--jobs", type=int, default=4, help="parallel agent calls (and models)")
+    p.add_argument("--split-agent", default=os.environ.get("LDRAW_ANNOTATOR_SPLIT_AGENT", run.SPLIT_AGENT),
+                   help="provider:agent (LLM) that decides the hierarchy (default: %(default)s, "
+                        "or $LDRAW_ANNOTATOR_SPLIT_AGENT)")
+    p.add_argument("--refine-agent", default=os.environ.get("LDRAW_ANNOTATOR_REFINE_AGENT", run.REFINE_AGENT),
+                   help="provider:agent (LLM) that rewrites parent descriptions (default: %(default)s, "
+                        "or $LDRAW_ANNOTATOR_REFINE_AGENT)")
     p.add_argument("--thinking", default=run.THINKING, choices=["none", "low", "medium", "high", "xhigh"],
                    help="reasoning effort (default: %(default)s, the fastest that answers well)")
     p.add_argument("--force", action="store_true", help="redo models that already have an output")
@@ -68,9 +68,12 @@ def main(argv=None):
     p = sub.add_parser("status", help="progress of a batch")
     p.add_argument("--work", default="work")
 
-    p = sub.add_parser("prep", parents=[db_arg], help="prepare one model and save its IR (ir.r0.json)")
+    p = sub.add_parser("prep", parents=[db_arg], help="prepare one model: save its IR (ir.r0.json), or one .mpd with --mpd")
     p.add_argument("input")
     p.add_argument("--work", default="work")
+    p.add_argument("--mpd", help="write the prepped model as one .mpd file (instead of the IR in --work)")
+
+    sub.add_parser("prompt", help="print instructions for annotating a prepped .mpd yourself")
 
     p = sub.add_parser("digest", parents=[db_arg], help="print what an agent sees")
     p.add_argument("model", help="model file, or model name in the work directory")
@@ -101,29 +104,38 @@ def main(argv=None):
         code, result = dispatch(args)
     except (FileNotFoundError, ValueError) as e:
         code, result = 2, {"error": str(e)}
-    json.dump(result, sys.stdout, indent=1, ensure_ascii=False)
-    print()
+    if result is not None:
+        json.dump(result, sys.stdout, indent=1, ensure_ascii=False)
+        print()
     return code
 
 
 def dispatch(args):
     if args.cmd == "run":
-        runner = run.Runner(args.out, args.work, args.jobs, args.split_model, args.refine_model,
+        runner = run.Runner(args.out, args.work, args.jobs, args.split_agent, args.refine_agent,
                             args.force, not args.no_pyldraw, args.thinking)
         results = runner.run(inputs(args.inputs))
         return (0 if all(r["status"] == "done" for r in results) else 1), results
     if args.cmd == "status":
         return 0, run.status(args.work)
+    if args.cmd == "prompt":
+        print(prompt())
+        return 0, None
     parts.db_path()  # fail early with a clear message when the DB is missing
     if args.cmd == "prep":
         ir = mpd.load(args.input)
-        out = Path(args.work) / run.model_key(args.input) / "ir.r0.json"
-        run.save_json(out, ir)
+        if args.mpd:
+            mpd.write(ir, args.mpd)
+            saved = {"mpd": args.mpd, "prefix": ir["prefix"]}
+        else:
+            out = Path(args.work) / run.model_key(args.input) / "ir.r0.json"
+            run.save_json(out, ir)
+            saved = {"ir": str(out)}
         kinds = {}
         for s in ir["sections"].values():
             kinds[s["kind"]] = kinds.get(s["kind"], 0) + 1
-        return 0, {"ir": str(out), "sections": kinds,
-                   "items": sum(len(mpd.items(s)) for s in ir["sections"].values() if s["kind"] == "model")}
+        return 0, saved | {"sections": kinds,
+                           "items": sum(len(mpd.items(s)) for s in ir["sections"].values() if s["kind"] == "model")}
     if args.cmd == "digest":
         ir = latest_ir(args.work, args.model)
         if args.tree:
@@ -156,6 +168,13 @@ def dispatch(args):
     if args.cmd == "db-sync":
         return 0, db.sync(inputs(args.inputs))
     raise ValueError(args.cmd)
+
+
+def prompt():
+    """Instructions for an agent that annotates a `prep --mpd` file itself: task + guide + tags."""
+    return "\n\n".join([(run.PROMPTS / "agent.md").read_text().strip(),
+                        (run.PROMPTS / "annotation-guide.md").read_text().strip(),
+                        "## Function tags (`0 !KEYWORDS`)\n\nUse only these: " + ", ".join(plan.KEYWORDS) + "."])
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 # ldraw-annotator-nova
 
 Turn plain LDraw models (`.ldr` / `.mpd`, from a few parts up to tens of MB) into annotated,
-self-contained `.mpd` files. An LLM structures the model; the tool checks every answer and
-verifies every output.
+self-contained `.mpd` files. An agent (an LLM) structures the model; the tool checks every
+answer and verifies every output.
 
 Each output has:
 
@@ -105,9 +105,10 @@ export LDRAW_ANNOTATOR_DB=~/.local/share/ldraw-annotator/ldraw-info.db   # e.g. 
 
 Or pass it to each command with `--db path/to/ldraw-info.db`.
 
-### An LLM
+### An agent
 
-The default is [z.ai](https://z.ai) GLM. Set your key:
+The agent is the LLM that structures your models. The default is [z.ai](https://z.ai) GLM. Set
+your key:
 
 ```sh
 export ZAI_API_KEY=...
@@ -115,8 +116,8 @@ export ZAI_API_KEY=...
 export ZAI_BASE_URL=https://api.z.ai/api/coding/paas/v4
 ```
 
-Other providers, and local models with Ollama, are covered under
-[Choosing the LLM](#choosing-the-llm).
+Other providers, and local agents with Ollama, are covered under
+[Choosing the agents](#choosing-the-agents).
 
 ## Annotate models
 
@@ -140,7 +141,7 @@ All progress is kept in a work directory (`./work` by default; change it with `-
 
 ```sh
 # aborted (Ctrl-C, crash, network down)? run the same command again: finished models and
-# finished LLM calls are not redone
+# finished agent calls are not redone
 ldraw-annotator run models/ --out annotated
 
 # models that already have an output are skipped; --force redoes them
@@ -159,21 +160,41 @@ ldraw-annotator status --work /path/to/other/work
 | 1 | some model failed its verification (see `status` and `work/<model>/check.json`) |
 | 2 | bad input: missing file, missing database, bad option |
 
-A model is still "done" when the LLM couldn't decide a few sections after 3 attempts: those
+A model is still "done" when the agent couldn't decide a few sections after 3 attempts: those
 sections are left as they were, and listed under `failed_units`.
 
-## Choosing the LLM
+## Annotate with your own agent
 
-There are two LLM jobs, each with its own model:
+Already working with a coding agent (Claude Code, Codex, Cursor…)? It can be the agent itself,
+with no API key: the tool prepares the model, tells the agent what to do, and verifies the
+result.
 
-- **split** (`--split-model`) decides the hierarchy. It's the hard job: use a strong model.
-- **refine** (`--refine-model`) rewrites parent descriptions from their children's. A small,
-  cheap model is enough.
+```sh
+# 1. the whole model as one .mpd, with part comments and flexible parts done
+ldraw-annotator prep my-car.mpd --mpd my-car.annotated.mpd
 
-A model is written `provider:model`. Keys and endpoints come from each provider's usual
-environment variables, so they never appear on the command line.
+# 2. the instructions: how to split, describe and name submodels
+ldraw-annotator prompt
 
-| Provider | Model example | Environment |
+# 3. once the agent has edited my-car.annotated.mpd: verify it
+ldraw-annotator check my-car.mpd my-car.annotated.mpd
+```
+
+Point your agent at these three commands, e.g. *"Annotate my-car.mpd: run `ldraw-annotator
+prompt` and follow it."* It's done when `check` says `"ok": true`.
+
+## Choosing the agents
+
+There are two jobs, each with its own agent (LLM):
+
+- **split** (`--split-agent`) decides the hierarchy. It's the hard job: use a strong agent.
+- **refine** (`--refine-agent`) rewrites parent descriptions from their children's. A small,
+  cheap agent is enough.
+
+An agent is written `provider:agent`, with the provider's own name for it. Keys and endpoints come
+from each provider's usual environment variables, so they never appear on the command line.
+
+| Provider | Agent example | Environment |
 |---|---|---|
 | z.ai (default) | `zai:glm-5.3` | `ZAI_API_KEY`, optional `ZAI_BASE_URL` |
 | OpenRouter | `openrouter:z-ai/glm-5.3` | `OPENROUTER_API_KEY` |
@@ -185,23 +206,23 @@ environment variables, so they never appear on the command line.
 # defaults: zai:glm-5.3 for split, zai:glm-5.3-flash for refine
 ldraw-annotator run models/ --out annotated
 
-# the same models through OpenRouter
+# the same agents through OpenRouter
 ldraw-annotator run models/ --out annotated \
-  --split-model openrouter:z-ai/glm-5.3 --refine-model openrouter:z-ai/glm-5.3-flash
+  --split-agent openrouter:z-ai/glm-5.3 --refine-agent openrouter:z-ai/glm-5.3-flash
 
-# Anthropic: a strong model for the hierarchy, a small one for descriptions
+# Anthropic: a strong agent for the hierarchy, a small one for descriptions
 ldraw-annotator run models/ --out annotated \
-  --split-model anthropic:claude-sonnet-5-5 --refine-model anthropic:claude-haiku-5-5
+  --split-agent anthropic:claude-sonnet-5-5 --refine-agent anthropic:claude-haiku-5-5
 ```
 
 To avoid typing them every time, set your choice once:
 
 ```sh
-export LDRAW_ANNOTATOR_SPLIT_MODEL=openrouter:z-ai/glm-5.3
-export LDRAW_ANNOTATOR_REFINE_MODEL=openrouter:z-ai/glm-5.3-flash
+export LDRAW_ANNOTATOR_SPLIT_AGENT=openrouter:z-ai/glm-5.3
+export LDRAW_ANNOTATOR_REFINE_AGENT=openrouter:z-ai/glm-5.3-flash
 ```
 
-### Local models with Ollama
+### Local agents with Ollama
 
 No key and no cost; your models never leave your machine.
 
@@ -211,20 +232,20 @@ ollama pull qwen3:32b
 ollama pull qwen3:8b
 
 ldraw-annotator run my-car.mpd --out annotated \
-  --split-model ollama:qwen3:32b --refine-model ollama:qwen3:8b -j 1
+  --split-agent ollama:qwen3:32b --refine-agent ollama:qwen3:8b -j 1
 
 # Ollama on another machine
 OLLAMA_HOST=http://gpu-box:11434 ldraw-annotator run my-car.mpd --out annotated \
-  --split-model ollama:qwen3:32b --refine-model ollama:qwen3:8b
+  --split-agent ollama:qwen3:32b --refine-agent ollama:qwen3:8b
 ```
 
 - Keep `-j` low (1-2): a local server answers one call at a time anyway.
-- Small models often break the answer rules. Their sections are retried, then left unsplit and
-  listed under `failed_units`. If `status` shows many, use a bigger model for `--split-model`.
-- Mixing works well: a cloud model for split, a local one for refine:
+- Small agents often break the answer rules. Their sections are retried, then left unsplit and
+  listed under `failed_units`. If `status` shows many, use a bigger agent for `--split-agent`.
+- Mixing works well: a cloud agent for split, a local one for refine:
 
   ```sh
-  ldraw-annotator run models/ --out annotated --split-model zai:glm-5.3 --refine-model ollama:qwen3:8b
+  ldraw-annotator run models/ --out annotated --split-agent zai:glm-5.3 --refine-agent ollama:qwen3:8b
   ```
 
 ### Other providers
@@ -235,13 +256,13 @@ installed alongside the tool:
 
 ```sh
 uv tool install --with 'any-llm-sdk[mistral]' <wheel url>
-ldraw-annotator run models/ --out annotated --split-model mistral:mistral-large-latest
+ldraw-annotator run models/ --out annotated --split-agent mistral:mistral-large-latest
 ```
 
 ### Reasoning effort
 
 `--thinking` (`none`, `low`, `medium`, `high`, `xhigh`; default `low`) sets how long reasoning
-models think. `low` is the fastest setting that still answers well; with GLM, the provider's
+agents think. `low` is the fastest setting that still answers well; with GLM, the provider's
 default reasoning made calls about 10x slower.
 
 ## Other commands
@@ -250,15 +271,16 @@ default reasoning made calls about 10x slower.
 # verify an annotated file against its input: lossless, format rules, pyldraw3 reparse
 ldraw-annotator check my-car.mpd annotated/my-car.mpd
 
-# see what the LLM is shown for a model (before or during a run)
+# see what the agent is shown for a model (before or during a run)
 ldraw-annotator digest my-car.mpd
 ldraw-annotator digest my-car --tree        # the hierarchy so far, from the work directory
 
-# prepare a model without any LLM: part comments + flexible parts, saved as work/<model>/ir.r0.json
+# prepare a model without any agent: part comments + flexible parts, saved as work/<model>/ir.r0.json
 ldraw-annotator prep my-car.mpd
+ldraw-annotator prep my-car.mpd --mpd prepped.mpd   # the same, as one .mpd file instead
 ```
 
-Every command prints JSON, so results are easy to script:
+Every command prints JSON (except `prompt`, which prints Markdown), so results are easy to script:
 
 ```sh
 ldraw-annotator status | jq '.[] | select(.state != "done") | .model'
@@ -282,7 +304,7 @@ triggers. It's the only command that writes to the database, so keep a copy if y
 git clone https://github.com/anteloc/ldraw-annotator-nova && cd ldraw-annotator-nova
 uv sync --extra test              # .venv with the package installed in editable mode
 uv run ldraw-annotator --help
-uv run pytest                     # deterministic tests, no LLM; uses data/ldraw-info.db
+uv run pytest                     # deterministic tests, no agent; uses data/ldraw-info.db
 uv build --wheel                  # dist/ldraw_annotator_nova-<version>-py3-none-any.whl
 ```
 
