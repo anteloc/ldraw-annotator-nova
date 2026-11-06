@@ -324,3 +324,26 @@ How the pipeline works is described in [AGENTS.md](AGENTS.md).
 ## License
 
 Code: [AGPL-3.0](LICENSE). Documentation and prompts: [CC BY-SA 4.0](CC-BY-SA-4.0).
+
+## Acknowledgements
+
+I'd like to thank the following:
+
+- [The LDraw Community](https://www.ldraw.org/)
+- [LDView](https://tcobbs.github.io/ldview/)'s Travis Cobbs (@tcobbs), and contributors.
+- [LeoCAD](https://github.com/leozide/leocad)'s Leonardo Zide (@leozide), and contributors.
+- [LDCad](https://www.melkert.net/LDCad) and Shadow Library, Roland Melkert.
+- [pyldraw3](https://github.com/hbmartin/pyldraw3)'s  Harold Martin (@hbmartin), and contributors.
+
+... and thanks to all of the many other LDraw creators!
+
+**NOTE:** For this work, I've used many LDraw models, libraries, tools, docs... from many sources.
+
+There is a lot **amazing people** that generously contributed to this, even for **decades**, by **generously donating their finest work** to the public domain and open source community. 
+
+If you think you should be included on this section, please **drop me an email!**
+
+## Trademarks
+
+**LEGO(R)** is a trademark of the **LEGO Group** of companies which does not sponsor, authorize or endorse this software.
+
